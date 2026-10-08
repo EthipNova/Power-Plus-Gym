@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "preview": "vite preview --host 0.0.0.0",
+    "dev": "cross-env PORT=3000 vite --host 0.0.0.0",
     "build:watch": "vite build --watch > build.log 2>&1",
     "watch:errors": "node dala-internal-watch-build-errors.js",
     "preview:dev": "concurrently \"npm run watch:errors\""
@@ -85,6 +85,7 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
     "autoprefixer": "^10.4.21",
+    "cross-env": "^10.1.0",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
