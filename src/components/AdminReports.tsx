@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
-import { useGym, formatETB, categoryLabelOf, dayName } from "../context/GymContext";
-import { ALL_CATEGORIES, WEEK_DAYS } from "../constants";
-import type { CustomerCategory } from "../types";
+import { useGym, formatETB, dayName } from "../context/GymContext";
+import { WEEK_DAYS } from "../constants";
+import { useReportCategories } from "../hooks/use-report-categories";
 
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 const TH = "text-left px-4 py-3";
@@ -12,36 +12,15 @@ const TREND = [{ m: "Feb", net: 8000 }, { m: "Mar", net: 12000 }, { m: "Apr", ne
 
 export function ReportsView() {
   const { state } = useGym();
-  const [catFilter, setCatFilter] = useState<CustomerCategory | "ALL">("ALL");
-  const scoped = catFilter === "ALL" ? state.members : state.members.filter(m => (m.category || "REGULAR") === catFilter);
-  const scopedIds = new Set(scoped.map(m => m.id));
-
-  const planDist = state.plans
-    .map(p => ({ name: p.name, value: scoped.filter(m => m.planId === p.id).length }))
-    .filter(d => d.value > 0);
+  const [planFilter, setPlanFilter] = useState("ALL");
+  const { rows, isLoading, error, refresh } = useReportCategories();
+  const filteredRows = planFilter === "ALL" ? rows : rows.filter(row => row.planName === planFilter);
+  const planDist = filteredRows.map(row => ({ name: row.planName, value: row.members }));
 
   const attendanceData = WEEK_DAYS.map(day => ({
     day: day.slice(0, 3),
-    visits: state.visits.filter(v => dayName(new Date(v.timestamp)) === day && (catFilter === "ALL" || scopedIds.has(v.memberId))).length,
+    visits: state.visits.filter(v => dayName(new Date(v.timestamp)) === day).length,
   }));
-
-  const rows = ALL_CATEGORIES.map(cat => {
-    const list = state.members.filter(m => (m.category || "REGULAR") === cat);
-    const ids = new Set(list.map(m => m.id));
-    const revenue = state.payments.filter(p => ids.has(p.memberId)).reduce((a, p) => a + p.amount, 0);
-    const visits = state.visits.filter(v => ids.has(v.memberId));
-    const plan = state.plans.find(p => p.id === list[0]?.planId);
-    return {
-      cat,
-      label: categoryLabelOf(state, cat),
-      members: list.length,
-      revenue,
-      visits: visits.length,
-      denied: visits.filter(v => v.accessStatus === "denied").length,
-      planName: plan?.name || "—",
-      revenuePerMember: list.length ? Math.round(revenue / list.length) : 0,
-    };
-  }).filter(r => catFilter === "ALL" || r.cat === catFilter);
 
   return (
     <div className="space-y-8">
@@ -50,13 +29,14 @@ export function ReportsView() {
           <h2 className="text-xl font-bold">Reports by customer category</h2>
           <p className="text-sm text-zinc-500">Cross-analysis of headcount, revenue and check-ins.</p>
         </div>
-        <select value={catFilter} onChange={e => setCatFilter(e.target.value as CustomerCategory | "ALL")} data-testid="report-category-filter" className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:outline-none">
+        <select value={planFilter} onChange={e => setPlanFilter(e.target.value)} data-testid="report-category-filter" className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:outline-none">
           <option value="ALL">All categories</option>
-          {ALL_CATEGORIES.map(c => <option key={c} value={c}>{categoryLabelOf(state, c)}</option>)}
+          {rows.map(row => <option key={row.planName} value={row.planName}>{row.planName}</option>)}
         </select>
       </div>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-x-auto">
+        {error && <div className="flex items-center justify-between gap-4 border-b border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200"><span>{error}</span><button onClick={() => void refresh()} className="font-semibold text-red-300 hover:text-white">Retry</button></div>}
         <table className="w-full text-sm">
           <thead className="bg-zinc-800/50">
             <tr>
@@ -67,9 +47,9 @@ export function ReportsView() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.cat} className="border-t border-zinc-800/50">
-                <td className="px-4 py-3 font-semibold">{r.label}</td>
+            {!isLoading && !error && filteredRows.map(r => (
+              <tr key={r.planName} className="border-t border-zinc-800/50">
+                <td className="px-4 py-3 font-semibold">{r.planName}</td>
                 <td className="px-4 py-3 text-zinc-400">{r.planName}</td>
                 <td className="px-4 py-3 text-right">{r.members}</td>
                 <td className="px-4 py-3 text-right text-lime-400 font-semibold">{formatETB(r.revenue)}</td>
@@ -80,13 +60,14 @@ export function ReportsView() {
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && <div className="p-8 text-center text-zinc-500">No data for this filter</div>}
+        {isLoading && <div className="p-8 text-center text-zinc-500">Loading customer categories...</div>}
+        {!isLoading && !error && filteredRows.length === 0 && <div className="p-8 text-center text-zinc-500">No data for this filter</div>}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className={CARD}>
           <h3 className="font-bold mb-4">Breakdown by plan</h3>
-          {planDist.length === 0 ? <p className="text-sm text-zinc-500">No members in this scope</p> : (
+          {isLoading ? <p className="text-sm text-zinc-500">Loading customer categories...</p> : error ? <p className="text-sm text-red-300">Unable to load customer categories.</p> : planDist.length === 0 ? <p className="text-sm text-zinc-500">No members in this scope</p> : (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
                 <Pie data={planDist} cx="50%" cy="50%" outerRadius={85} dataKey="value">

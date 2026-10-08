@@ -1,19 +1,23 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Barbell, Users, Lightning, ShieldCheck, Heart, Star, MapPin, Phone, Envelope, ArrowRight, CheckCircle, Clock, Flame, GraduationCap, MoonStars, MusicNotes, Sparkle } from "@phosphor-icons/react";
-import { useGym, formatETB, generateId, sendEmail, planAppliesToCategory, planCategoryText, categoryLabelOf } from "../context/GymContext";
+import { useGym, formatETB, sendEmail, planAppliesToCategory, planCategoryText, categoryLabelOf } from "../context/GymContext";
 import type { CustomerCategory, Member } from "../types";
 
 const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
 const SHOWCASE_IMAGE = "https://dala-prod-public-storage.s3.eu-west-1.amazonaws.com/attachments/74c3195e-a7cc-42d6-bc7d-af4a5309a248/1791041128283_Screenshot_2026-10-03_182425.webp";
 import { toast } from "sonner";
+import { registerCustomer } from "../services/registration";
 
-export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => void }) {
+export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => void | Promise<void> }) {
   const { state, dispatch } = useGym();
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string>("p2");
   const [joinCategory, setJoinCategory] = useState<CustomerCategory>("REGULAR");
+  const [showWomensHours, setShowWomensHours] = useState(false);
   const [joinForm, setJoinForm] = useState({ name: "", phone: "", email: "", studentId: "", institution: "" });
+  const [joinPassword, setJoinPassword] = useState("");
+  const [isJoining, setIsJoining] = useState(false);
   const [contactForm, setContactForm] = useState({ name: "", email: "", message: "" });
 
   const plansForCategory = state.plans.filter(p => p.active && planAppliesToCategory(p, joinCategory));
@@ -24,9 +28,13 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
     if (next) setSelectedPlan(next.id);
   };
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     if (!joinForm.name || !joinForm.phone || !joinForm.email) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+    if (joinPassword.length < 6) {
+      toast.error("Password must be at least 6 characters");
       return;
     }
     const plan = state.plans.find(p => p.id === selectedPlan) ?? plansForCategory[0];
@@ -38,32 +46,44 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
       toast.error("A student ID number is required for the Student category");
       return;
     }
-    const newMember: Member = {
-      id: generateId("m"),
-      name: joinForm.name,
-      phone: joinForm.phone,
-      email: joinForm.email,
-      memberId: `PP-${String(state.members.length + 1).padStart(3, "0")}`,
-      planId: plan.id,
-      joinDate: new Date().toISOString().split("T")[0],
-      expiryDate: new Date(Date.now() + plan.durationDays * 86400000).toISOString().split("T")[0],
-      status: "active",
-      lastVisit: null,
-      emergencyContact: "",
-      emergencyPhone: "",
-      medicalNotes: "",
-      emailNotifications: true,
-      balanceDue: 0,
-      category: joinCategory,
-      studentId: joinCategory === "STUDENT" ? joinForm.studentId : undefined,
-      institution: joinCategory === "STUDENT" ? joinForm.institution : undefined,
-      studentVerified: false,
-    };
-    onJoin(newMember);
-    sendEmail(state, dispatch, joinForm.email, joinForm.name, "Welcome to Power Plus Gym!", `Hi ${joinForm.name}, your ${plan.name} membership (${categoryLabelOf(state, joinCategory)} category) is active until ${newMember.expiryDate}.`, "welcome");
-    toast.success(`Welcome ${joinForm.name}! Your ${plan.name} membership is active.`);
-    setShowJoinModal(false);
-    setJoinForm({ name: "", phone: "", email: "", studentId: "", institution: "" });
+    setIsJoining(true);
+    try {
+      const registered = await registerCustomer({ email: joinForm.email, password: joinPassword, fullName: joinForm.name, phone: joinForm.phone, planName: plan.name, planPrice: plan.price, durationDays: plan.durationDays });
+      const newMember: Member = {
+        id: registered.id,
+        name: joinForm.name,
+        phone: joinForm.phone,
+        email: joinForm.email,
+        memberId: registered.customerCode,
+        planId: plan.id,
+        joinDate: new Date().toISOString().split("T")[0],
+        expiryDate: new Date(Date.now() + plan.durationDays * 86400000).toISOString().split("T")[0],
+        status: "active",
+        lastVisit: null,
+        emergencyContact: "",
+        emergencyPhone: "",
+        medicalNotes: "",
+        emailNotifications: true,
+        balanceDue: 0,
+        category: joinCategory,
+        studentId: joinCategory === "STUDENT" ? joinForm.studentId : undefined,
+        institution: joinCategory === "STUDENT" ? joinForm.institution : undefined,
+        studentVerified: false,
+      };
+      await onJoin(newMember);
+      sendEmail(state, dispatch, joinForm.email, joinForm.name, "Welcome to Power Plus Gym!", `Hi ${joinForm.name}, your ${plan.name} membership (${categoryLabelOf(state, joinCategory)} category) is active until ${newMember.expiryDate}.`, "welcome");
+      toast.success(registered.membershipCreated
+        ? `Welcome ${joinForm.name}! Your ${plan.name} membership is active.`
+        : `Welcome ${joinForm.name}! Your customer account was created; membership setup is pending.`);
+      setShowJoinModal(false);
+      setJoinForm({ name: "", phone: "", email: "", studentId: "", institution: "" });
+      setJoinPassword("");
+    } catch (cause) {
+      console.error("Join Us registration failed", cause);
+      toast.error(cause instanceof Error ? cause.message : "Registration failed. Please try again.");
+    } finally {
+      setIsJoining(false);
+    }
   };
 
   const handleContact = () => {
@@ -90,6 +110,10 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
     { name: "Personal coaching", desc: "Certified coaches building tailor-made programs", icon: Star },
     { name: "Nutrition bar", desc: "Protein shakes, prepared meals and supplements", icon: Lightning },
   ];
+
+  if (showWomensHours) {
+    return <WomensHoursPage rules={state.accessRules.filter(rule => rule.category === "MUSLIM" && rule.active)} trainers={state.trainers.filter(trainer => trainer.active)} onBack={() => setShowWomensHours(false)} />;
+  }
 
   return (
     <div className="min-h-[100dvh] bg-zinc-950 text-white">
@@ -175,7 +199,7 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
               const Icon = CATEGORY_ICONS[cat.category];
               const rules = state.accessRules.filter(r => r.category === cat.category && r.active);
               return (
-                <motion.div key={cat.category} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 hover:border-lime-400/30 transition-colors">
+                <motion.div key={cat.category} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} onClick={() => cat.category === "MUSLIM" && setShowWomensHours(true)} onKeyDown={e => { if (cat.category === "MUSLIM" && (e.key === "Enter" || e.key === " ")) setShowWomensHours(true); }} role={cat.category === "MUSLIM" ? "button" : undefined} tabIndex={cat.category === "MUSLIM" ? 0 : undefined} className={`bg-zinc-900 border border-zinc-800 rounded-2xl p-6 hover:border-lime-400/30 transition-colors ${cat.category === "MUSLIM" ? "cursor-pointer" : ""}`}>
                   <Icon weight="fill" className="w-9 h-9 text-lime-400 mb-3" />
                   <h3 className="text-lg font-bold mb-1">{cat.label}</h3>
                   <p className="text-zinc-400 text-sm mb-4">{cat.description}</p>
@@ -277,6 +301,7 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
                 <input value={joinForm.name} onChange={e => setJoinForm({ ...joinForm, name: e.target.value })} placeholder="Full name" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
                 <input value={joinForm.phone} onChange={e => setJoinForm({ ...joinForm, phone: e.target.value })} placeholder="Phone number" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
                 <input value={joinForm.email} onChange={e => setJoinForm({ ...joinForm, email: e.target.value })} placeholder="E-mail address" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
+                <input type="password" value={joinPassword} onChange={e => setJoinPassword(e.target.value)} placeholder="Password (min. 6 characters)" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
                 {joinCategory === "STUDENT" && (
                   <div className="space-y-3 border border-blue-400/30 bg-blue-400/5 rounded-xl p-3">
                     <p className="text-xs text-blue-400">Student proof required — verified at reception before the reduced rate is activated.</p>
@@ -284,14 +309,53 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
                     <input value={joinForm.institution} onChange={e => setJoinForm({ ...joinForm, institution: e.target.value })} placeholder="Institution" className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50" />
                   </div>
                 )}
-                <button onClick={handleJoin} className="w-full bg-lime-400 text-zinc-950 font-bold py-3 rounded-xl hover:bg-lime-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2">
-                  Complete my sign-up <ArrowRight weight="bold" className="w-5 h-5" />
+                <button onClick={() => void handleJoin()} disabled={isJoining} className="w-full bg-lime-400 text-zinc-950 font-bold py-3 rounded-xl hover:bg-lime-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-60">
+                  {isJoining ? "Creating your account..." : "Complete my sign-up"} {!isJoining && <ArrowRight weight="bold" className="w-5 h-5" />}
                 </button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function WomensHoursPage({ rules, trainers, onBack }: { rules: { id: string; startTime: string; endTime: string; days: string[]; description: string }[]; trainers: { id: string; name: string; specialties: string[]; bio?: string }[]; onBack: () => void }) {
+  return (
+    <div className="min-h-[100dvh] bg-zinc-950 text-white px-4 py-16 md:px-8">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <button onClick={onBack} className="text-sm text-zinc-400 hover:text-lime-400 transition-colors">← Back to member categories</button>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 md:p-8">
+          <div className="flex items-start gap-4">
+            <MoonStars weight="fill" className="w-10 h-10 text-lime-400 shrink-0" />
+            <div>
+              <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tight">Women's Hours (Muslim)</h1>
+              <p className="text-zinc-400 mt-3 max-w-2xl">A designated gym access option with dedicated hours and a welcoming training environment.</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-4">Women's Hours</h2>
+          <p className="text-sm text-zinc-400">Members selecting this existing category can use the access schedule configured by the gym.</p>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-4">Schedule</h2>
+          {rules.length === 0 ? <p className="text-sm text-zinc-500">No Women's Hours schedule is currently configured.</p> : (
+            <div className="space-y-3">
+              {rules.map(rule => <div key={rule.id} className="bg-zinc-800/50 rounded-xl p-4"><div className="flex flex-wrap justify-between gap-3 text-sm"><span className="font-semibold">{rule.days.join(", ")}</span><span className="text-lime-400 font-semibold">{rule.startTime} - {rule.endTime}</span></div>{rule.description && <p className="text-xs text-zinc-500 mt-2">{rule.description}</p>}</div>)}
+            </div>
+          )}
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-4">Guidelines</h2>
+          <p className="text-sm text-zinc-400">Please follow the configured access hours and gym rules during your session. Ask reception if you need help with access or membership details.</p>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-4">Training team</h2>
+          {trainers.length === 0 ? <p className="text-sm text-zinc-500">No active trainers are currently listed.</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{trainers.map(trainer => <div key={trainer.id} className="bg-zinc-800/50 rounded-xl p-4"><div className="font-semibold">{trainer.name}</div><div className="text-xs text-lime-400 mt-1">{trainer.specialties.join(" · ")}</div>{trainer.bio && <p className="text-xs text-zinc-500 mt-2">{trainer.bio}</p>}</div>)}</div>}
+        </div>
+      </div>
     </div>
   );
 }

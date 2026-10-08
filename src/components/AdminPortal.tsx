@@ -1,16 +1,16 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Users, Coins, TrendUp, Receipt, Gear, Plus, X, MagnifyingGlass, User, ShieldCheck, Drop } from "@phosphor-icons/react";
 import LockersManagement from "./LockersManagement";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { useGym, useT, formatETB, addAudit, computeMemberStatus, categoryLabelOf, computeSteamStatus } from "../context/GymContext";
-import { ALL_CATEGORIES } from "../constants";
-import type { CustomerCategory } from "../types";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { useGym, useT, formatETB, addAudit } from "../context/GymContext";
 import { toast } from "sonner";
 import { CategoriesView } from "./CategoryManagement";
 import { PlansView } from "./PlansView";
 import { CustomersView, FinancesView } from "./AdminCustomers";
 import { ReportsView } from "./AdminReports";
+import { useDashboardStats } from "../hooks/use-dashboard-stats";
+import { useDashboardSupplementalData } from "../hooks/use-dashboard-supplemental-data";
 
 const TABS = ["dashboard", "customers", "categories", "plans", "finances", "reports", "lockers", "settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -65,19 +65,16 @@ export default function AdminPortal() {
 
 function DashboardView() {
   const { state } = useGym();
-  const totalRevenue = state.payments.reduce((a, p) => a + p.amount, 0);
-  const totalExpenses = state.expenses.reduce((a, e) => a + e.amount, 0);
-  const netResult = totalRevenue - totalExpenses;
-  const activeMembers = state.members.filter(m => computeMemberStatus(m, state.settings) === "active").length;
-  const expiringMembers = state.members.filter(m => computeMemberStatus(m, state.settings) === "expiring").length;
-  const expiredMembers = state.members.filter(m => computeMemberStatus(m, state.settings) === "expired").length;
-  const steamRevenue = state.payments.filter(p => p.type === "steam").reduce((a, p) => a + p.amount, 0);
-  const activeSteam = state.steamAccess.filter(s => computeSteamStatus(s, state.settings) !== "Expired").length;
-
-  const monthlyData = useMemo(() => {
-    const months = ["Feb", "Mar", "Apr", "May", "Jun", "Jul"];
-    return months.map((m, i) => ({ name: m, revenue: 45000 + i * 8000 + Math.floor(Math.random() * 10000), expenses: 38000 + Math.floor(Math.random() * 5000) }));
-  }, []);
+  const { stats, isLoading, error, refresh } = useDashboardStats();
+  const supplemental = useDashboardSupplementalData();
+  const totalRevenue = stats?.totalRevenue ?? 0;
+  const totalExpenses = stats?.totalExpense ?? 0;
+  const netResult = stats?.netResult ?? 0;
+  const activeMembers = stats?.activeMembers ?? 0;
+  const expiringMembers = stats?.expiringMembers ?? 0;
+  const expiredMembers = stats?.expiredMembers ?? 0;
+  const steamRevenue = supplemental.steam?.revenue ?? 0;
+  const activeSteam = supplemental.steam?.activePasses ?? 0;
 
   const kpis = [
     { label: "Total revenue", value: formatETB(totalRevenue), icon: Coins, color: "text-lime-400" },
@@ -85,61 +82,73 @@ function DashboardView() {
     { label: "Net result", value: formatETB(netResult), icon: TrendUp, color: netResult >= 0 ? "text-lime-400" : "text-red-400" },
     { label: "Active members", value: String(activeMembers), icon: Users, color: "text-blue-400" },
   ];
+  const displayKpiValue = (value: string) => isLoading ? "..." : error ? "—" : value;
 
   return (
     <div className="space-y-8">
+      {error && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">
+          <span>{error}</span>
+          <button onClick={() => void refresh()} className="font-semibold text-red-300 hover:text-white">Retry</button>
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, i) => (
           <motion.div key={kpi.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} className={CARD}>
             <kpi.icon weight="fill" className={`w-8 h-8 ${kpi.color} mb-3`} />
-            <div className="text-2xl font-black">{kpi.value}</div>
+            <div className="text-2xl font-black">{displayKpiValue(kpi.value)}</div>
             <div className="text-sm text-zinc-500">{kpi.label}</div>
           </motion.div>
         ))}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className={`${CARD} text-center`}><div className="text-3xl font-black text-lime-400">{activeMembers}</div><div className="text-sm text-zinc-400 mt-1">Active</div></div>
-        <div className={`${CARD} text-center`}><div className="text-3xl font-black text-yellow-400">{expiringMembers}</div><div className="text-sm text-zinc-400 mt-1">Expiring soon</div></div>
-        <div className={`${CARD} text-center`}><div className="text-3xl font-black text-red-400">{expiredMembers}</div><div className="text-sm text-zinc-400 mt-1">Expired</div></div>
+        <div className={`${CARD} text-center`}><div className="text-3xl font-black text-lime-400">{displayKpiValue(String(activeMembers))}</div><div className="text-sm text-zinc-400 mt-1">Active</div></div>
+        <div className={`${CARD} text-center`}><div className="text-3xl font-black text-yellow-400">{displayKpiValue(String(expiringMembers))}</div><div className="text-sm text-zinc-400 mt-1">Expiring soon</div></div>
+        <div className={`${CARD} text-center`}><div className="text-3xl font-black text-red-400">{displayKpiValue(String(expiredMembers))}</div><div className="text-sm text-zinc-400 mt-1">Expired</div></div>
       </div>
       {state.settings.steamEnabled && (
         <div className={CARD}>
           <h3 className="font-bold mb-4 flex items-center gap-2"><Drop weight="fill" className="w-5 h-5 text-cyan-400" /> Steam module</h3>
+          {supplemental.error && <div className="mb-4 text-sm text-red-300">{supplemental.error} <button onClick={() => void supplemental.refresh()} className="font-semibold hover:text-white">Retry</button></div>}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-zinc-800/50 rounded-2xl p-4"><div className="text-2xl font-black text-cyan-400">{activeSteam}</div><div className="text-xs text-zinc-500">Active Steam passes</div></div>
-            <div className="bg-zinc-800/50 rounded-2xl p-4"><div className="text-2xl font-black text-lime-400">{formatETB(steamRevenue)}</div><div className="text-xs text-zinc-500">Steam revenue</div></div>
-            <div className="bg-zinc-800/50 rounded-2xl p-4"><div className="text-2xl font-black text-white">{state.steamUsage.length}</div><div className="text-xs text-zinc-500">Steam entries logged</div></div>
+            <div className="bg-zinc-800/50 rounded-2xl p-4"><div className="text-2xl font-black text-cyan-400">{supplemental.isLoading ? "..." : supplemental.error ? "—" : activeSteam}</div><div className="text-xs text-zinc-500">Active Steam passes</div></div>
+            <div className="bg-zinc-800/50 rounded-2xl p-4"><div className="text-2xl font-black text-lime-400">{supplemental.isLoading ? "..." : supplemental.error ? "—" : formatETB(steamRevenue)}</div><div className="text-xs text-zinc-500">Steam revenue</div></div>
+            <div className="bg-zinc-800/50 rounded-2xl p-4"><div className="text-2xl font-black text-white">{supplemental.isLoading ? "..." : supplemental.error ? "—" : supplemental.steam?.recentEntries ?? 0}</div><div className="text-xs text-zinc-500">Recent Steam entries</div></div>
           </div>
         </div>
       )}
       <div className={CARD}>
         <h3 className="font-bold mb-4">Member breakdown by customer category</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {ALL_CATEGORIES.map(cat => {
-            const list = state.members.filter(m => (m.category || "REGULAR") === cat);
-            const revenue = state.payments.filter(p => list.some(m => m.id === p.memberId)).reduce((a, p) => a + p.amount, 0);
+        {supplemental.error && <div className="mb-4 text-sm text-red-300">{supplemental.error} <button onClick={() => void supplemental.refresh()} className="font-semibold hover:text-white">Retry</button></div>}
+        {supplemental.isLoading && <div className="text-sm text-zinc-500">Loading member categories...</div>}
+        {!supplemental.isLoading && !supplemental.error && supplemental.categoryBreakdown?.length === 0 && <div className="text-sm text-zinc-500">No member category data available.</div>}
+        {!supplemental.isLoading && !supplemental.error && supplemental.categoryBreakdown && <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {supplemental.categoryBreakdown.map(item => {
             return (
-              <div key={cat} className="bg-zinc-800/50 rounded-2xl p-4">
-                <div className="text-sm font-semibold">{categoryLabelOf(state, cat)}</div>
-                <div className="text-2xl font-black text-lime-400">{list.length}</div>
-                <div className="text-xs text-zinc-500">{formatETB(revenue)} in revenue</div>
+              <div key={item.planName} className="bg-zinc-800/50 rounded-2xl p-4">
+                <div className="text-sm font-semibold">{item.planName}</div>
+                <div className="text-2xl font-black text-lime-400">{item.memberCount}</div>
+                <div className="text-xs text-zinc-500">{formatETB(item.revenue)} in revenue</div>
               </div>
             );
           })}
-        </div>
+        </div>}
       </div>
       <div className={CARD}>
         <h3 className="font-bold mb-4">Revenue vs expenses (monthly)</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={monthlyData}>
+        {supplemental.isLoading && <div className="h-[280px] flex items-center justify-center text-sm text-zinc-500">Loading financial trend...</div>}
+        {!supplemental.isLoading && supplemental.trendError && <div className="h-[280px] flex flex-col items-center justify-center gap-2 text-sm text-red-300"><span>{supplemental.trendError}</span><button onClick={() => void supplemental.refresh()} className="font-semibold hover:text-white">Retry</button></div>}
+        {!supplemental.isLoading && !supplemental.trendError && supplemental.financialTrend?.length === 0 && <div className="h-[280px] flex items-center justify-center text-sm text-zinc-500">No revenue or expense data available.</div>}
+        {!supplemental.isLoading && !supplemental.trendError && supplemental.financialTrend && supplemental.financialTrend.length > 0 && <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={supplemental.financialTrend}>
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
             <XAxis dataKey="name" stroke="#71717a" fontSize={12} />
             <YAxis stroke="#71717a" fontSize={12} />
             <Tooltip contentStyle={CHART_TOOLTIP} />
-            <Bar dataKey="revenue" fill="#a3e635" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="expenses" fill="#ef4444" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+            <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#a3e635" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="expenses" name="Expense" stroke="#ef4444" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>}
       </div>
     </div>
   );

@@ -15,7 +15,7 @@ export default function MemberPortal() {
   const { state } = useGym();
   const t = useT();
   const member = state.members.find(m => m.id === state.currentUser?.memberId);
-  const [tab, setTab] = useState<"dashboard" | "renew" | "steam" | "profile">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "renew" | "steam" | "profile" | "womens-hour">("dashboard");
 
   if (!member) {
     return (
@@ -30,6 +30,8 @@ export default function MemberPortal() {
   }
 
   const category: CustomerCategory = member.category || "REGULAR";
+  const eligibleForWomensHour = category === "MUSLIM";
+  const tabs: ("dashboard" | "renew" | "steam" | "profile" | "womens-hour")[] = ["dashboard", "renew", "steam", "profile", ...(eligibleForWomensHour ? ["womens-hour" as const] : [])];
   const CategoryIcon = CATEGORY_ICONS[category];
   const plan = state.plans.find(p => p.id === member.planId);
   const rules = state.accessRules.filter(r => r.category === category && r.active);
@@ -54,7 +56,7 @@ export default function MemberPortal() {
           <h1 className="text-2xl font-black uppercase tracking-tight">{t("member.title")}</h1>
         </div>
         <div className="flex gap-2 mb-8 overflow-x-auto pb-1">
-          {(["dashboard", "renew", "steam", "profile"] as const).map(key => (
+          {tabs.map(key => (
             <button key={key} onClick={() => setTab(key)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${tab === key ? "bg-lime-400 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>{t(`member.tab.${key}`)}</button>
           ))}
         </div>
@@ -207,6 +209,7 @@ export default function MemberPortal() {
         {tab === "renew" && <RenewView member={member} category={category} />}
         {tab === "steam" && <SteamView member={member} />}
         {tab === "profile" && <ProfileView member={member} category={category} />}
+        {tab === "womens-hour" && (eligibleForWomensHour ? <WomensHourView member={member} rules={rules} trainers={state.trainers.filter(trainer => trainer.active)} /> : <UnauthorizedWomensHourView />)}
       </div>
     </div>
   );
@@ -359,4 +362,55 @@ function ProfileView({ member, category }: { member: Member; category: CustomerC
       </div>
     </div>
   );
+}
+
+function WomensHourView({ member, rules, trainers }: { member: Member; rules: { id: string; startTime: string; endTime: string; days: string[]; description: string }[]; trainers: { id: string; name: string; specialties: string[]; bio?: string }[] }) {
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <div className={`${CARD} border-lime-400/30`}>
+        <div className="flex items-start gap-4">
+          <MoonStars weight="fill" className="w-10 h-10 text-lime-400 shrink-0" />
+          <div>
+            <h2 className="text-2xl font-black">Women's Hour</h2>
+            <p className="text-sm text-zinc-400 mt-2">A designated gym access area for members registered under the Women's Hours (Muslim) option.</p>
+          </div>
+        </div>
+        <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-lime-400/15 px-3 py-1.5 text-sm font-semibold text-lime-400">
+          <CheckCircle weight="fill" className="w-4 h-4" /> Eligible member
+        </div>
+      </div>
+
+      <div className={CARD}>
+        <h3 className="font-bold mb-4 flex items-center gap-2"><Clock className="w-5 h-5 text-lime-400" /> Schedule</h3>
+        {rules.length === 0 ? <p className="text-sm text-zinc-500">No Women's Hour schedule is configured.</p> : (
+          <div className="space-y-3">
+            {rules.map(rule => (
+              <div key={rule.id} className="bg-zinc-800/50 rounded-xl p-4">
+                <div className="flex justify-between gap-4 text-sm"><span className="font-semibold text-white">{rule.days.join(", ")}</span><span className="text-lime-400 font-semibold">{rule.startTime} - {rule.endTime}</span></div>
+                {rule.description && <p className="text-xs text-zinc-500 mt-2">{rule.description}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className={CARD}>
+        <h3 className="font-bold mb-4 flex items-center gap-2"><User className="w-5 h-5 text-lime-400" /> Your member information</h3>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><span className="text-zinc-500 block">Name</span><span>{member.name}</span></div>
+          <div><span className="text-zinc-500 block">Member ID</span><span>{member.memberId}</span></div>
+          <div><span className="text-zinc-500 block">Phone</span><span>{member.phone || "—"}</span></div>
+          <div><span className="text-zinc-500 block">Email</span><span>{member.email || "—"}</span></div>
+        </div>
+      </div>
+      <div className={CARD}>
+        <h3 className="font-bold mb-4">Training team</h3>
+        {trainers.length === 0 ? <p className="text-sm text-zinc-500">No active trainers are currently listed.</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{trainers.map(trainer => <div key={trainer.id} className="bg-zinc-800/50 rounded-xl p-4"><div className="font-semibold">{trainer.name}</div><div className="text-xs text-lime-400 mt-1">{trainer.specialties.join(" · ")}</div>{trainer.bio && <p className="text-xs text-zinc-500 mt-2">{trainer.bio}</p>}</div>)}</div>}
+      </div>
+    </div>
+  );
+}
+
+function UnauthorizedWomensHourView() {
+  return <div className={`${CARD} max-w-lg mx-auto text-center`}><ShieldCheck className="w-10 h-10 text-zinc-500 mx-auto mb-3" /><h2 className="text-xl font-bold">Women's Hour unavailable</h2><p className="text-sm text-zinc-500 mt-2">This area is available only to eligible members.</p></div>;
 }

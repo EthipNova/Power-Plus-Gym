@@ -21,12 +21,10 @@ import {
   useT,
   lockerStats,
   activeAssignmentOf,
-  issueLocker,
-  returnLocker,
-  reportLostKey,
-  generateId,
 } from "../context/GymContext";
 import type { Locker, LockerSection, LockerStatus } from "../types";
+import { useLockers } from "../hooks/use-lockers";
+import { assignLocker, createLocker, createLockers, loseLockerKey, returnLockerAssignment, updateLockerStatus } from "../services/lockers";
 
 const SECTIONS: LockerSection[] = ["Men", "Women", "VIP", "General"];
 
@@ -56,8 +54,10 @@ const inputClass =
 const labelClass = "text-xs font-bold uppercase tracking-wide text-zinc-500 mb-1.5 block";
 
 export default function LockersManagement() {
-  const { state, dispatch } = useGym();
+  const { state } = useGym();
   const t = useT();
+  const lockerData = useLockers();
+  const lockerState = useMemo(() => ({ ...state, lockers: lockerData.lockers, lockerAssignments: lockerData.assignments }), [state, lockerData.lockers, lockerData.assignments]);
   const actor = state.currentUser?.name ?? "Reception";
 
   const [search, setSearch] = useState("");
@@ -66,24 +66,24 @@ export default function LockersManagement() {
   const [selected, setSelected] = useState<Locker | null>(null);
   const [showAdd, setShowAdd] = useState(false);
 
-  const stats = useMemo(() => lockerStats(state), [state]);
+  const stats = useMemo(() => lockerStats(lockerState), [lockerState]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return state.lockers
+    return lockerData.lockers
       .filter(l => statusFilter === "ALL" || l.status === statusFilter)
       .filter(l => sectionFilter === "ALL" || l.section === sectionFilter)
       .filter(l => {
         if (!q) return true;
-        const occupant = activeAssignmentOf(state, l.id)?.memberName ?? "";
+        const occupant = activeAssignmentOf(lockerState, l.id)?.memberName ?? "";
         return `${l.number} ${l.keyTag} ${l.section} ${occupant}`.toLowerCase().includes(q);
       })
       .sort((a, b) => a.number.localeCompare(b.number));
-  }, [state, search, statusFilter, sectionFilter]);
+  }, [lockerData.lockers, lockerState, search, statusFilter, sectionFilter]);
 
   const history = useMemo(
-    () => state.lockerAssignments.slice().sort((a, b) => (a.assignedAt < b.assignedAt ? 1 : -1)).slice(0, 8),
-    [state.lockerAssignments],
+    () => lockerData.assignments.slice().sort((a, b) => (a.assignedAt < b.assignedAt ? 1 : -1)).slice(0, 8),
+    [lockerData.assignments],
   );
 
   const statCards: { key: string; value: string; icon: ReactNode; accent: string }[] = [
@@ -96,6 +96,8 @@ export default function LockersManagement() {
 
   return (
     <div className="space-y-6">
+      {lockerData.error && <div className="flex items-center justify-between gap-4 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200"><span>{lockerData.error}</span><button onClick={() => void lockerData.refresh()} className="font-semibold text-red-300 hover:text-white">Retry</button></div>}
+      {lockerData.isLoading && <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-10 text-center text-zinc-500">Loading lockers...</div>}
       {/* En-tête */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -168,14 +170,14 @@ export default function LockersManagement() {
       </div>
 
       {/* Grille */}
-      {filtered.length === 0 ? (
+      {!lockerData.isLoading && filtered.length === 0 ? (
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-10 text-center text-zinc-500">
           {t("locker.noLockers")}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {filtered.map(locker => {
-            const assignment = activeAssignmentOf(state, locker.id);
+            const assignment = activeAssignmentOf(lockerState, locker.id);
             const style = STATUS_STYLE[locker.status];
             return (
               <button
@@ -210,7 +212,7 @@ export default function LockersManagement() {
         ) : (
           <div className="space-y-2">
             {history.map(a => {
-              const locker = state.lockers.find(l => l.id === a.lockerId);
+              const locker = lockerData.lockers.find(l => l.id === a.lockerId);
               const chip =
                 a.status === "active"
                   ? "bg-amber-400/15 text-amber-400"
@@ -239,8 +241,8 @@ export default function LockersManagement() {
       </div>
 
       <AnimatePresence>
-        {selected && <LockerActionModal locker={selected} onClose={() => setSelected(null)} actor={actor} />}
-        {showAdd && <AddLockerModal onClose={() => setShowAdd(false)} />}
+        {selected && <LockerActionModal locker={selected} onClose={() => setSelected(null)} actor={actor} lockerState={lockerState} customers={lockerData.customers} refresh={lockerData.refresh} />}
+        {showAdd && <AddLockerModal onClose={() => setShowAdd(false)} refresh={lockerData.refresh} />}
       </AnimatePresence>
     </div>
   );
@@ -248,23 +250,18 @@ export default function LockersManagement() {
 
 /* ---------------------------- Modal : action sur un casier ---------------------------- */
 
-function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose: () => void; actor: string }) {
-  const { state, dispatch } = useGym();
+function LockerActionModal({ locker, onClose, actor, lockerState, customers, refresh }: { locker: Locker; onClose: () => void; actor: string; lockerState: ReturnType<typeof useGym>["state"]; customers: { id: string; name: string; customerCode: string }[]; refresh: () => Promise<void> }) {
+  const { state } = useGym();
   const t = useT();
-  const assignment = activeAssignmentOf(state, locker.id);
+  const assignment = activeAssignmentOf(lockerState, locker.id);
   const [memberId, setMemberId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [fee, setFee] = useState("200");
 
-  const run = (fn: () => { ok: boolean; message: string }) => {
-    const res = fn();
-    if (res.ok) {
-      toast.success(res.message);
-      onClose();
-    } else {
-      toast.error(res.message);
-    }
+  const run = async (fn: () => Promise<void>, success: string) => {
+    try { await fn(); await refresh(); toast.success(success); onClose(); }
+    catch (cause) { console.error("Locker operation failed", cause); toast.error(cause instanceof Error ? cause.message : "Locker operation failed."); }
   };
 
   return (
@@ -307,9 +304,9 @@ function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose
               <label className={labelClass}>{t("locker.selectMember")}</label>
               <select value={memberId} onChange={e => setMemberId(e.target.value)} className={inputClass}>
                 <option value="">—</option>
-                {state.members.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} · {m.memberId}
+                {customers.map(customer => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.name} · {customer.customerCode}
                   </option>
                 ))}
               </select>
@@ -324,12 +321,12 @@ function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose
             </div>
             <button
               onClick={() => {
-                const member = state.members.find(m => m.id === memberId);
-                if (!member) {
+                const customer = customers.find(item => item.id === memberId);
+                if (!customer) {
                   toast.error(t("locker.fillRequired"));
                   return;
                 }
-                run(() => issueLocker(state, dispatch, locker.id, member, actor, dueDate || null, notes));
+                void run(() => assignLocker({ lockerId: locker.id, customerId: customer.id, customerName: customer.name, dueDate: dueDate || null, notes, issuedBy: state.currentUser?.id ?? actor }), t("locker.issueSuccess", { n: locker.number, name: customer.name }));
               }}
               className="w-full bg-lime-400 text-zinc-950 py-3 rounded-xl font-bold hover:bg-lime-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
             >
@@ -357,7 +354,7 @@ function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose
               )}
             </div>
             <button
-              onClick={() => run(() => returnLocker(state, dispatch, locker.id, actor))}
+              onClick={() => assignment && void run(() => returnLockerAssignment(assignment), t("locker.returnSuccess", { n: locker.number }))}
               className="w-full bg-emerald-400 text-zinc-950 py-3 rounded-xl font-bold hover:bg-emerald-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
             >
               <KeyReturn weight="bold" className="w-4 h-4" /> {t("locker.return")}
@@ -371,7 +368,7 @@ function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose
                 <input type="number" min={0} value={fee} onChange={e => setFee(e.target.value)} className={inputClass} />
               </div>
               <button
-                onClick={() => run(() => reportLostKey(state, dispatch, locker.id, actor, Number(fee) || 0))}
+                onClick={() => assignment && void run(() => loseLockerKey(assignment, Number(fee) || 0, t("locker.lostKey")), t("locker.lostSuccess", { n: locker.number }))}
                 className="w-full bg-red-400/15 text-red-400 border border-red-400/40 py-3 rounded-xl font-bold hover:bg-red-400/25 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
               >
                 <XCircle weight="bold" className="w-4 h-4" /> {t("locker.lostKey")}
@@ -388,9 +385,7 @@ function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose
             </div>
             <button
               onClick={() => {
-                dispatch({ type: "UPDATE_LOCKER", payload: { ...locker, status: "AVAILABLE" } });
-                toast.success(t("locker.status.AVAILABLE"));
-                onClose();
+                void run(() => updateLockerStatus(locker.id, "AVAILABLE"), t("locker.status.AVAILABLE"));
               }}
               className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl font-bold text-white hover:bg-zinc-700 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
             >
@@ -405,8 +400,7 @@ function LockerActionModal({ locker, onClose, actor }: { locker: Locker; onClose
 
 /* ---------------------------- Modal : ajout (unitaire ou en lot) ---------------------------- */
 
-function AddLockerModal({ onClose }: { onClose: () => void }) {
-  const { state, dispatch } = useGym();
+function AddLockerModal({ onClose, refresh }: { onClose: () => void; refresh: () => Promise<void> }) {
   const t = useT();
   const [section, setSection] = useState<LockerSection>("Men");
   const [number, setNumber] = useState("");
@@ -415,44 +409,29 @@ function AddLockerModal({ onClose }: { onClose: () => void }) {
   const [start, setStart] = useState("11");
   const [count, setCount] = useState("5");
 
-  const addSingle = () => {
+  const addSingle = async () => {
     if (!number.trim()) {
       toast.error(t("locker.fillRequired"));
       return;
     }
-    dispatch({
-      type: "ADD_LOCKER",
-      payload: {
-        id: generateId("lk"),
-        number: number.trim(),
-        section,
-        keyTag: keyTag.trim(),
-        status: "AVAILABLE",
-        createdAt: new Date().toISOString().split("T")[0],
-      },
-    });
-    toast.success(`${number.trim()} · ${t("locker.status.AVAILABLE")}`);
-    onClose();
+    try { await createLocker({ number: number.trim(), section, keyTag: keyTag.trim() }); await refresh(); toast.success(`${number.trim()} · ${t("locker.status.AVAILABLE")}`); onClose(); }
+    catch (cause) { console.error("Unable to create locker", cause); toast.error(cause instanceof Error ? cause.message : "Unable to create locker."); }
   };
 
-  const addBulk = () => {
+  const addBulk = async () => {
     const n = Math.max(1, Math.min(50, Number(count) || 0));
     const s = Number(start) || 1;
     const p = prefix.trim() || "G";
-    const items: Locker[] = Array.from({ length: n }, (_, i) => {
+    const items = Array.from({ length: n }, (_, i) => {
       const num = s + i;
       return {
-        id: generateId("lk"),
         number: `${p}-${String(num).padStart(2, "0")}`,
         section,
         keyTag: `K-${p}${num}`,
-        status: "AVAILABLE",
-        createdAt: new Date().toISOString().split("T")[0],
       };
     });
-    dispatch({ type: "ADD_LOCKERS", payload: items });
-    toast.success(`${n} · ${t("locker.create")}`);
-    onClose();
+    try { await createLockers(items); await refresh(); toast.success(`${n} · ${t("locker.create")}`); onClose(); }
+    catch (cause) { console.error("Unable to create lockers", cause); toast.error(cause instanceof Error ? cause.message : "Unable to create lockers."); }
   };
 
   return (
@@ -506,7 +485,7 @@ function AddLockerModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <button
-            onClick={addSingle}
+            onClick={() => void addSingle()}
             className="w-full bg-lime-400 text-zinc-950 py-3 rounded-xl font-bold hover:bg-lime-300 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
           >
             <Check weight="bold" className="w-4 h-4" /> {t("common.save")}
@@ -532,7 +511,7 @@ function AddLockerModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <button
-            onClick={addBulk}
+            onClick={() => void addBulk()}
             className="w-full bg-zinc-800 border border-zinc-700 text-white py-3 rounded-xl font-bold hover:bg-zinc-700 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
           >
             <Plus weight="bold" className="w-4 h-4" /> {t("locker.create")}
