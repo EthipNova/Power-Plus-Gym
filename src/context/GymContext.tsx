@@ -68,6 +68,16 @@ type Action =
   | { type: "ADD_LOCKER_ASSIGNMENT"; payload: LockerAssignment }
   | { type: "UPDATE_LOCKER_ASSIGNMENT"; payload: LockerAssignment };
 
+const getInitialUser = (): AuthUser | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("powerplus_current_user");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
 const initialState: State = {
   members: MEMBERS,
   plans: PLANS,
@@ -90,12 +100,25 @@ const initialState: State = {
   language: DEFAULT_LANGUAGE,
   lockers: LOCKERS,
   lockerAssignments: LOCKER_ASSIGNMENTS,
-  currentUser: null,
+  currentUser: getInitialUser(),
 };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case "SET_USER": return { ...state, currentUser: action.payload };
+    case "SET_USER": {
+      if (typeof window !== "undefined") {
+        try {
+          if (action.payload) {
+            localStorage.setItem("powerplus_current_user", JSON.stringify(action.payload));
+          } else {
+            localStorage.removeItem("powerplus_current_user");
+          }
+        } catch {
+          // ignore storage errors
+        }
+      }
+      return { ...state, currentUser: action.payload };
+    }
     case "ADD_MEMBER": return { ...state, members: [...state.members, action.payload] };
     case "UPDATE_MEMBER": return { ...state, members: state.members.map(m => m.id === action.payload.id ? action.payload : m) };
     case "DELETE_MEMBER": return { ...state, members: state.members.filter(m => m.id !== action.payload) };

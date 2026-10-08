@@ -16,12 +16,53 @@ import { toast } from "sonner";
 const EMAIL_STATUS_LABELS: Record<string, string> = { queued: "Queued", sent: "Sent", delivered: "Delivered", opened: "Opened", failed: "Failed" };
 const EMAIL_TYPE_LABELS: Record<string, string> = { welcome: "Welcome", receipt: "Receipt", reminder: "Reminder", expiry: "Expiry", marketing: "Announcement" };
 
+const normalizePath = (p: string) => {
+  const clean = p.split("?")[0].split("#")[0].replace(/\/+$/, "").toLowerCase();
+  return clean === "" ? "/" : clean;
+};
+
+const getInitialPath = () => {
+  if (typeof window === "undefined") return "/";
+  return normalizePath(window.location.pathname);
+};
+
 function AppShell() {
   const { state, dispatch } = useGym();
   const t = useT();
-  const [page, setPage] = useState<"public" | "portal">("public");
+  const [path, setPath] = useState<string>(getInitialPath);
+  const [page, setPage] = useState<"public" | "portal">(() => {
+    const initial = getInitialPath();
+    return initial === "/staff" ? "portal" : "public";
+  });
   const [showLogin, setShowLogin] = useState(false);
   const [showEmailLog, setShowEmailLog] = useState(false);
+
+  const navigate = (to: string, replace = false) => {
+    const target = normalizePath(to);
+    if (typeof window !== "undefined") {
+      const current = normalizePath(window.location.pathname);
+      if (current !== target) {
+        if (replace) {
+          window.history.replaceState({}, "", target);
+        } else {
+          window.history.pushState({}, "", target);
+        }
+      }
+    }
+    setPath(target);
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const p = normalizePath(window.location.pathname);
+      setPath(p);
+      if (p === "/staff") {
+        setPage("portal");
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const handleLogin = (role: "owner" | "staff" | "member" | "trainer") => {
     const creds = DEMO_CREDENTIALS[role];
@@ -31,12 +72,18 @@ function AppShell() {
     dispatch({ type: "SET_USER", payload: user });
     setShowLogin(false);
     setPage("portal");
+    if (role === "staff") {
+      navigate("/staff");
+    } else if (path === "/staff") {
+      navigate("/");
+    }
     toast.success(t("app.welcome", { name: creds.name }));
   };
 
   const handleLogout = () => {
     dispatch({ type: "SET_USER", payload: null });
     setPage("public");
+    navigate("/");
     toast(t("app.loggedOut"));
   };
 
@@ -44,22 +91,64 @@ function AppShell() {
     dispatch({ type: "ADD_MEMBER", payload: member });
     dispatch({ type: "SET_USER", payload: { id: member.id, name: member.name, role: "member", memberId: member.id } });
     setPage("portal");
+    navigate("/");
     toast.success(t("app.joined", { name: member.name }));
   };
 
   const closeLogin = () => {
     setShowLogin(false);
-    if (!state.currentUser) setPage("public");
+    if (!state.currentUser) {
+      setPage("public");
+    }
   };
 
   // Open the login modal when the portal is requested without an authenticated user.
-  // Doing it inside an effect keeps `currentView` pure — calling a state setter during
-  // render is exactly what triggered the React #301 error (infinite loop).
+  // /staff has its own inline login page, so no modal is needed there.
   useEffect(() => {
-    if (page === "portal" && !state.currentUser) setShowLogin(true);
-  }, [page, state.currentUser]);
+    if (path === "/staff") {
+      if (state.currentUser && state.currentUser.role !== "staff" && state.currentUser.role !== "owner") {
+        toast.error("Staff access required");
+        navigate("/", true);
+      }
+    } else if (page === "portal" && !state.currentUser) {
+      setShowLogin(true);
+    }
+  }, [path, page, state.currentUser]);
+
+  const handleStaffLogin = () => {
+    handleLogin("staff");
+  };
 
   const currentView = () => {
+    if (path === "/staff") {
+      if (state.currentUser && (state.currentUser.role === "staff" || state.currentUser.role === "owner")) {
+        return <StaffPortal />;
+      }
+      // Dedicated staff login page (inline, not a modal)
+      return (
+        <div className="min-h-[80dvh] flex items-center justify-center px-4">
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 w-full max-w-md">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-blue-400/20 rounded-full flex items-center justify-center">
+                <Users weight="fill" className="w-6 h-6 text-blue-400" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black uppercase text-white">{t("app.role.staff")} {t("app.loginTitle")}</h2>
+                <p className="text-sm text-zinc-500">{t("app.role.staffDesc")}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-zinc-500 mb-6 bg-zinc-800/50 rounded-xl p-3">
+              <Lock className="w-4 h-4" /> {t("app.loginHint")}
+            </div>
+            <button onClick={handleStaffLogin} className="w-full bg-blue-500 hover:bg-blue-400 border border-blue-400/30 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+              <div className="w-12 h-12 bg-blue-400/20 rounded-full flex items-center justify-center"><Users weight="fill" className="w-6 h-6 text-blue-400" /></div>
+              <div><div className="font-bold text-white">{t("app.role.staff")}</div><div className="text-sm text-blue-200/70">{t("app.role.staffDesc")}</div></div>
+            </button>
+          </motion.div>
+        </div>
+      );
+    }
+
     if (page === "public") return <PublicWebsite onJoin={handleJoin} />;
     if (!state.currentUser) return <PublicWebsite onJoin={handleJoin} />;
     switch (state.currentUser.role) {
@@ -75,7 +164,7 @@ function AppShell() {
       {/* Main navigation */}
       <nav className="fixed top-0 left-0 right-0 z-40 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/50">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setPage("public")}>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => { setPage("public"); navigate("/"); }}>
             <Barbell weight="fill" className="w-7 h-7 text-lime-400" />
             <span className="font-black text-lg uppercase tracking-tight text-white hidden sm:block">{state.settings.gymName}</span>
           </div>
@@ -94,13 +183,24 @@ function AppShell() {
             </div>
             {state.currentUser ? (
               <>
-                <span className="text-sm text-zinc-400 hidden sm:flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    if (state.currentUser?.role === "staff") {
+                      navigate("/staff");
+                    } else {
+                      setPage("portal");
+                      navigate("/");
+                    }
+                  }}
+                  className="text-sm text-zinc-400 hover:text-white hidden sm:flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Dashboard"
+                >
                   {state.currentUser.role === "owner" && <ShieldCheck className="w-4 h-4 text-lime-400" />}
                   {state.currentUser.role === "staff" && <Users className="w-4 h-4 text-blue-400" />}
                   {state.currentUser.role === "member" && <User className="w-4 h-4 text-yellow-400" />}
                   {state.currentUser.role === "trainer" && <ChalkboardTeacher className="w-4 h-4 text-amber-400" />}
                   {state.currentUser.name}
-                </span>
+                </button>
                 <button onClick={() => setShowEmailLog(true)} className="relative p-2 text-zinc-400 hover:text-white transition-colors">
                   <Envelope className="w-5 h-5" />
                   {state.emailLogs.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-lime-400 text-zinc-950 text-[10px] font-bold rounded-full flex items-center justify-center">{state.emailLogs.length}</span>}
@@ -140,10 +240,7 @@ function AppShell() {
                   <div className="w-12 h-12 bg-lime-400/20 rounded-full flex items-center justify-center"><ShieldCheck weight="fill" className="w-6 h-6 text-lime-400" /></div>
                   <div><div className="font-bold">{t("app.role.owner")}</div><div className="text-sm text-zinc-500">{t("app.role.ownerDesc")}</div></div>
                 </button>
-                <button onClick={() => handleLogin("staff")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
-                  <div className="w-12 h-12 bg-blue-400/20 rounded-full flex items-center justify-center"><Users weight="fill" className="w-6 h-6 text-blue-400" /></div>
-                  <div><div className="font-bold">{t("app.role.staff")}</div><div className="text-sm text-zinc-500">{t("app.role.staffDesc")}</div></div>
-                </button>
+
                 <button onClick={() => handleLogin("trainer")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
                   <div className="w-12 h-12 bg-amber-400/20 rounded-full flex items-center justify-center"><ChalkboardTeacher weight="fill" className="w-6 h-6 text-amber-400" /></div>
                   <div><div className="font-bold">{t("app.role.trainer")}</div><div className="text-sm text-zinc-500">{t("app.role.trainerDesc")}</div></div>
