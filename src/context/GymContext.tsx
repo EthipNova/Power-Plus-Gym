@@ -2,6 +2,7 @@ import { createContext, useContext, useReducer, type ReactNode } from "react";
 import type { Member, Plan, Payment, Expense, Visit, EmailLog, StaffUser, GymSettings, AuditLog, AuthUser, MemberStatus, Trainer, GymClass, ClassAttendee, TrainerClientNote, CustomerCategory, AccessRule, AerobicsGroup, CategoryLabel, AccessDecision, SteamAccess, SteamUsage, SteamStatus, SteamType, Language, Locker, LockerAssignment } from "../types";
 import { MEMBERS, PLANS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, DEFAULT_SETTINGS, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, CATEGORY_LABELS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
 import { DEFAULT_LANGUAGE, translate } from "../i18n/translations";
+import { getLocalLockers, getLocalAssignments, saveLocalLockers, saveLocalAssignments } from "../lib/lockerService";
 
 export interface State {
   members: Member[];
@@ -30,6 +31,8 @@ export interface State {
 
 type Action =
   | { type: "SET_USER"; payload: AuthUser | null }
+  | { type: "SET_MEMBERS"; payload: Member[] }
+  | { type: "SET_VISITS"; payload: Visit[] }
   | { type: "ADD_MEMBER"; payload: Member }
   | { type: "UPDATE_MEMBER"; payload: Member }
   | { type: "DELETE_MEMBER"; payload: string }
@@ -61,6 +64,8 @@ type Action =
   | { type: "UPDATE_STEAM_ACCESS"; payload: SteamAccess }
   | { type: "ADD_STEAM_USAGE"; payload: SteamUsage }
   | { type: "SET_LANGUAGE"; payload: Language }
+  | { type: "SET_LOCKERS"; payload: Locker[] }
+  | { type: "SET_LOCKER_ASSIGNMENTS"; payload: LockerAssignment[] }
   | { type: "ADD_LOCKER"; payload: Locker }
   | { type: "ADD_LOCKERS"; payload: Locker[] }
   | { type: "UPDATE_LOCKER"; payload: Locker }
@@ -78,12 +83,22 @@ const getInitialUser = (): AuthUser | null => {
   }
 };
 
+const getInitialVisits = (): Visit[] => {
+  if (typeof window === "undefined") return VISITS;
+  try {
+    const raw = localStorage.getItem("powerplus_visits");
+    return raw ? JSON.parse(raw) : VISITS;
+  } catch {
+    return VISITS;
+  }
+};
+
 const initialState: State = {
   members: MEMBERS,
   plans: PLANS,
   payments: PAYMENTS,
   expenses: EXPENSES,
-  visits: VISITS,
+  visits: getInitialVisits(),
   emailLogs: EMAIL_LOGS,
   staff: STAFF,
   settings: DEFAULT_SETTINGS,
@@ -98,8 +113,8 @@ const initialState: State = {
   steamAccess: STEAM_ACCESS,
   steamUsage: STEAM_USAGE,
   language: DEFAULT_LANGUAGE,
-  lockers: LOCKERS,
-  lockerAssignments: LOCKER_ASSIGNMENTS,
+  lockers: getLocalLockers(),
+  lockerAssignments: getLocalAssignments(),
   currentUser: getInitialUser(),
 };
 
@@ -119,6 +134,8 @@ function reducer(state: State, action: Action): State {
       }
       return { ...state, currentUser: action.payload };
     }
+    case "SET_MEMBERS": return { ...state, members: action.payload };
+    case "SET_VISITS": return { ...state, visits: action.payload };
     case "ADD_MEMBER": return { ...state, members: [...state.members, action.payload] };
     case "UPDATE_MEMBER": return { ...state, members: state.members.map(m => m.id === action.payload.id ? action.payload : m) };
     case "DELETE_MEMBER": return { ...state, members: state.members.filter(m => m.id !== action.payload) };
@@ -155,12 +172,44 @@ function reducer(state: State, action: Action): State {
     case "UPDATE_STEAM_ACCESS": return { ...state, steamAccess: state.steamAccess.map(s => s.id === action.payload.id ? action.payload : s) };
     case "ADD_STEAM_USAGE": return { ...state, steamUsage: [action.payload, ...state.steamUsage] };
     case "SET_LANGUAGE": return { ...state, language: action.payload };
-    case "ADD_LOCKER": return { ...state, lockers: [...state.lockers, action.payload] };
-    case "ADD_LOCKERS": return { ...state, lockers: [...state.lockers, ...action.payload] };
-    case "UPDATE_LOCKER": return { ...state, lockers: state.lockers.map(l => l.id === action.payload.id ? action.payload : l) };
-    case "DELETE_LOCKER": return { ...state, lockers: state.lockers.filter(l => l.id !== action.payload) };
-    case "ADD_LOCKER_ASSIGNMENT": return { ...state, lockerAssignments: [action.payload, ...state.lockerAssignments] };
-    case "UPDATE_LOCKER_ASSIGNMENT": return { ...state, lockerAssignments: state.lockerAssignments.map(a => a.id === action.payload.id ? action.payload : a) };
+    case "SET_LOCKERS": {
+      saveLocalLockers(action.payload);
+      return { ...state, lockers: action.payload };
+    }
+    case "SET_LOCKER_ASSIGNMENTS": {
+      saveLocalAssignments(action.payload);
+      return { ...state, lockerAssignments: action.payload };
+    }
+    case "ADD_LOCKER": {
+      const updated = [...state.lockers, action.payload];
+      saveLocalLockers(updated);
+      return { ...state, lockers: updated };
+    }
+    case "ADD_LOCKERS": {
+      const updated = [...state.lockers, ...action.payload];
+      saveLocalLockers(updated);
+      return { ...state, lockers: updated };
+    }
+    case "UPDATE_LOCKER": {
+      const updated = state.lockers.map(l => l.id === action.payload.id ? action.payload : l);
+      saveLocalLockers(updated);
+      return { ...state, lockers: updated };
+    }
+    case "DELETE_LOCKER": {
+      const updated = state.lockers.filter(l => l.id !== action.payload);
+      saveLocalLockers(updated);
+      return { ...state, lockers: updated };
+    }
+    case "ADD_LOCKER_ASSIGNMENT": {
+      const updated = [action.payload, ...state.lockerAssignments];
+      saveLocalAssignments(updated);
+      return { ...state, lockerAssignments: updated };
+    }
+    case "UPDATE_LOCKER_ASSIGNMENT": {
+      const updated = state.lockerAssignments.map(a => a.id === action.payload.id ? action.payload : a);
+      saveLocalAssignments(updated);
+      return { ...state, lockerAssignments: updated };
+    }
     default: return state;
   }
 }
@@ -443,18 +492,21 @@ export function issueLocker(
   actor: string,
   dueDate: string | null,
   notes: string,
+  keyRecipient?: string,
 ): { ok: boolean; message: string } {
   const msg = (k: string, vars?: Record<string, string | number>) => translate(state.language, k, vars);
   const locker = state.lockers.find(l => l.id === lockerId);
   if (!locker) return { ok: false, message: msg("locker.fillRequired") };
   if (activeAssignmentOf(state, lockerId)) return { ok: false, message: msg("locker.conflictLocker") };
   if (memberActiveLocker(state, member.id)) return { ok: false, message: msg("locker.conflictMember") };
+  const recipient = keyRecipient?.trim() || member.name;
   const assignment: LockerAssignment = {
     id: generateId("la"),
     lockerId,
     memberId: member.id,
     memberName: member.name,
-    assignedAt: new Date().toISOString().split("T")[0],
+    keyRecipient: recipient,
+    assignedAt: new Date().toISOString(),
     dueDate,
     returnedAt: null,
     status: "active",

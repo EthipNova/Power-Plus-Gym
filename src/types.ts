@@ -262,15 +262,16 @@ export type LockerSection = "Men" | "Women" | "VIP" | "General";
 /** Statut d'une attribution de casier. */
 export type LockerAssignmentStatus = "active" | "returned" | "lost";
 
-/** Casier de la salle (section, numéro et porte-clés). */
+/** Casier de la salle (numéro et porte-clés). */
 export interface Locker {
   id: string;
   number: string;
-  section: LockerSection;
+  section?: LockerSection;
   keyTag: string;
   status: LockerStatus;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 /** Attribution d'un casier à un client (trace complète). */
@@ -287,4 +288,5 @@ export interface LockerAssignment {
   lostKeyFee: number;
   issuedBy: string;
   notes: string;
+  keyRecipient?: string;
 }
