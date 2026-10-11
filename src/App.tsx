@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Barbell, User, Users, ShieldCheck, Envelope, SignOut, Lock, X, CheckCircle, Warning, Bell, ChalkboardTeacher } from "@phosphor-icons/react";
+import { Barbell, User, Users, ShieldCheck, Envelope, SignOut, Lock, X, CheckCircle, Warning, Bell, ChalkboardTeacher, ArrowLeft, Sparkle, MusicNotes } from "@phosphor-icons/react";
 import { Toaster } from "sonner";
 import { GymProvider, useGym, useT, sendEmail, addAudit, generateId } from "./context/GymContext";
-import type { AuthUser, Member } from "./types";
+import type { AuthUser, Member, Role } from "./types";
 import { DEMO_CREDENTIALS } from "./constants";
 import { LANGUAGES } from "./i18n/translations";
 import PublicWebsite from "./components/PublicWebsite";
@@ -21,15 +21,28 @@ function AppShell() {
   const t = useT();
   const [page, setPage] = useState<"public" | "portal">("public");
   const [showLogin, setShowLogin] = useState(false);
+  const [loginStep, setLoginStep] = useState<"roles" | "customerType">("roles");
   const [showEmailLog, setShowEmailLog] = useState(false);
 
-  const handleLogin = (role: "owner" | "staff" | "member" | "trainer") => {
-    const creds = DEMO_CREDENTIALS[role];
+  const handleLogin = (role: "owner" | "staff" | "member" | "trainer", memberId?: string) => {
+    let creds: { id: string; name: string; role: Role };
+    if (role === "member") {
+      const targetId = memberId || DEMO_CREDENTIALS.member.id;
+      if (targetId === DEMO_CREDENTIALS.member_aerobics.id) {
+        creds = DEMO_CREDENTIALS.member_aerobics;
+      } else {
+        const mem = state.members.find(m => m.id === targetId);
+        creds = mem ? { id: mem.id, name: mem.name, role: "member" } : DEMO_CREDENTIALS.member;
+      }
+    } else {
+      creds = DEMO_CREDENTIALS[role];
+    }
     const user: AuthUser = { id: creds.id, name: creds.name, role };
     if (role === "member") user.memberId = creds.id;
     if (role === "trainer") user.trainerId = creds.id;
     dispatch({ type: "SET_USER", payload: user });
     setShowLogin(false);
+    setLoginStep("roles");
     setPage("portal");
     toast.success(t("app.welcome", { name: creds.name }));
   };
@@ -49,6 +62,7 @@ function AppShell() {
 
   const closeLogin = () => {
     setShowLogin(false);
+    setLoginStep("roles");
     if (!state.currentUser) setPage("public");
   };
 
@@ -109,7 +123,7 @@ function AppShell() {
               </>
             ) : (
               <>
-                <button onClick={() => { setShowLogin(true); setPage("portal"); }} className="bg-lime-400 text-zinc-950 px-4 py-2 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors active:scale-[0.97]">
+                <button onClick={() => { setLoginStep("roles"); setShowLogin(true); setPage("portal"); }} className="bg-lime-400 text-zinc-950 px-4 py-2 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors active:scale-[0.97]">
                   {t("app.portalAccess")}
                 </button>
               </>
@@ -132,27 +146,67 @@ function AppShell() {
                 <h3 className="text-2xl font-black uppercase">{t("app.loginTitle")}</h3>
                 <button onClick={closeLogin}><X className="w-5 h-5 text-zinc-400" /></button>
               </div>
-              <div className="flex items-center gap-2 text-sm text-zinc-500 mb-6 bg-zinc-800/50 rounded-xl p-3">
-                <Lock className="w-4 h-4" /> {t("app.loginHint")}
-              </div>
-              <div className="space-y-3">
-                <button onClick={() => handleLogin("owner")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
-                  <div className="w-12 h-12 bg-lime-400/20 rounded-full flex items-center justify-center"><ShieldCheck weight="fill" className="w-6 h-6 text-lime-400" /></div>
-                  <div><div className="font-bold">{t("app.role.owner")}</div><div className="text-sm text-zinc-500">{t("app.role.ownerDesc")}</div></div>
-                </button>
-                <button onClick={() => handleLogin("staff")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
-                  <div className="w-12 h-12 bg-blue-400/20 rounded-full flex items-center justify-center"><Users weight="fill" className="w-6 h-6 text-blue-400" /></div>
-                  <div><div className="font-bold">{t("app.role.staff")}</div><div className="text-sm text-zinc-500">{t("app.role.staffDesc")}</div></div>
-                </button>
-                <button onClick={() => handleLogin("trainer")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
-                  <div className="w-12 h-12 bg-amber-400/20 rounded-full flex items-center justify-center"><ChalkboardTeacher weight="fill" className="w-6 h-6 text-amber-400" /></div>
-                  <div><div className="font-bold">{t("app.role.trainer")}</div><div className="text-sm text-zinc-500">{t("app.role.trainerDesc")}</div></div>
-                </button>
-                <button onClick={() => handleLogin("member")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
-                  <div className="w-12 h-12 bg-yellow-400/20 rounded-full flex items-center justify-center"><User weight="fill" className="w-6 h-6 text-yellow-400" /></div>
-                  <div><div className="font-bold">{t("app.role.member")}</div><div className="text-sm text-zinc-500">{t("app.role.memberDesc")}</div></div>
-                </button>
-              </div>
+              {loginStep === "roles" ? (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-zinc-500 mb-6 bg-zinc-800/50 rounded-xl p-3">
+                    <Lock className="w-4 h-4" /> {t("app.loginHint")}
+                  </div>
+                  <div className="space-y-3">
+                    <button onClick={() => handleLogin("owner")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+                      <div className="w-12 h-12 bg-lime-400/20 rounded-full flex items-center justify-center"><ShieldCheck weight="fill" className="w-6 h-6 text-lime-400" /></div>
+                      <div><div className="font-bold">{t("app.role.owner")}</div><div className="text-sm text-zinc-500">{t("app.role.ownerDesc")}</div></div>
+                    </button>
+                    <button onClick={() => handleLogin("staff")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+                      <div className="w-12 h-12 bg-blue-400/20 rounded-full flex items-center justify-center"><Users weight="fill" className="w-6 h-6 text-blue-400" /></div>
+                      <div><div className="font-bold">{t("app.role.staff")}</div><div className="text-sm text-zinc-500">{t("app.role.staffDesc")}</div></div>
+                    </button>
+                    <button onClick={() => handleLogin("trainer")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+                      <div className="w-12 h-12 bg-amber-400/20 rounded-full flex items-center justify-center"><ChalkboardTeacher weight="fill" className="w-6 h-6 text-amber-400" /></div>
+                      <div><div className="font-bold">{t("app.role.trainer")}</div><div className="text-sm text-zinc-500">{t("app.role.trainerDesc")}</div></div>
+                    </button>
+                    <button onClick={() => setLoginStep("customerType")} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+                      <div className="w-12 h-12 bg-yellow-400/20 rounded-full flex items-center justify-center"><User weight="fill" className="w-6 h-6 text-yellow-400" /></div>
+                      <div><div className="font-bold">{t("app.role.member")}</div><div className="text-sm text-zinc-500">{t("app.role.memberDesc")}</div></div>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-6">
+                    <div className="text-base font-bold text-white mb-1">Select customer type</div>
+                    <p className="text-xs text-zinc-400">Choose the type of customer account you want to access.</p>
+                  </div>
+                  <div className="space-y-3">
+                    <button onClick={() => handleLogin("member", DEMO_CREDENTIALS.member_regular.id)} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+                      <div className="w-12 h-12 bg-lime-400/20 rounded-full flex items-center justify-center shrink-0"><Sparkle weight="fill" className="w-6 h-6 text-lime-400" /></div>
+                      <div>
+                        <div className="font-bold text-white flex items-center gap-2">
+                          Regular Customer
+                          <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-lime-400/10 text-lime-400 border border-lime-400/20">Demo</span>
+                        </div>
+                        <div className="text-xs text-zinc-400 mt-0.5">Normal gym membership and open-floor access</div>
+                        <div className="text-[11px] text-zinc-500 mt-1">{DEMO_CREDENTIALS.member_regular.name} · Active member</div>
+                      </div>
+                    </button>
+                    <button onClick={() => handleLogin("member", DEMO_CREDENTIALS.member_aerobics.id)} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl p-4 flex items-center gap-4 transition-colors text-left active:scale-[0.98]">
+                      <div className="w-12 h-12 bg-fuchsia-400/20 rounded-full flex items-center justify-center shrink-0"><MusicNotes weight="fill" className="w-6 h-6 text-fuchsia-400" /></div>
+                      <div>
+                        <div className="font-bold text-white flex items-center gap-2">
+                          Aerobics Customer
+                          <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-fuchsia-400/10 text-fuchsia-400 border border-fuchsia-400/20">Demo</span>
+                        </div>
+                        <div className="text-xs text-zinc-400 mt-0.5">Scheduled group aerobics sessions and schedule</div>
+                        <div className="text-[11px] text-zinc-500 mt-1">{DEMO_CREDENTIALS.member_aerobics.name} · Beginner Aerobics</div>
+                      </div>
+                    </button>
+                  </div>
+                  <div className="mt-6 pt-4 border-t border-zinc-800">
+                    <button onClick={() => setLoginStep("roles")} className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors font-medium">
+                      <ArrowLeft className="w-4 h-4" /> Back to roles
+                    </button>
+                  </div>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}

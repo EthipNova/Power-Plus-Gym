@@ -10,7 +10,9 @@ import {
   sellSteamAccess,
   recordSteamUsage,
 } from "../context/GymContext";
-import type { Member, Payment, SteamAccess, SteamStatus, SteamType } from "../types";
+import type { Member, Payment, SteamAccess, SteamStatus, SteamType, SteamUsage } from "../types";
+import type { CustomerSteamAccess, CustomerSteamUsage } from "../services/steamService";
+import { determinePassState } from "../services/steamService";
 import { toast } from "sonner";
 
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
@@ -50,26 +52,100 @@ export function SteamAccessCard({ access }: { access: SteamAccess }) {
   );
 }
 
-export function SteamUsageLog({ memberId }: { memberId: string }) {
-  const { state } = useGym();
-  const entries = state.steamUsage.filter(u => u.customerId === memberId);
+export function LiveSteamAccessCard({ access }: { access: CustomerSteamAccess }) {
+  const status = determinePassState(access);
+  const isPackage = access.type === "package";
   return (
-    <div className={CARD}>
-      <h3 className="font-bold mb-3 flex items-center gap-2"><Waves className="w-5 h-5 text-cyan-400" /> Steam History</h3>
-      <div className="space-y-2">
-        {entries.length === 0 && <p className="text-sm text-zinc-500">No Steam entry recorded.</p>}
-        {entries.slice(0, 10).map(u => (
-          <div key={u.id} className="flex justify-between items-center text-sm py-2 border-b border-zinc-800/50">
-            <div className="flex items-center gap-2">
-              <Drop weight="fill" className="w-4 h-4 text-cyan-400" />
-              <span>{u.notes || "Steam Entry"}</span>
-            </div>
-            <div className="text-right">
-              <div className="text-zinc-500 text-xs">{new Date(u.timestamp).toLocaleDateString("en-US")}</div>
-              <div className="text-zinc-600 text-[11px]">{new Date(u.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })} · {u.recordedBy}</div>
+    <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-cyan-400/15 flex items-center justify-center shrink-0">
+            {isPackage ? <Coins weight="fill" className="w-5 h-5 text-cyan-400" /> : <Timer weight="fill" className="w-5 h-5 text-cyan-400" />}
+          </div>
+          <div>
+            <div className="font-semibold text-sm text-white">{isPackage ? "Steam Package" : "Single Session"}</div>
+            <div className="text-xs text-zinc-400">
+              {access.startDate ? `${new Date(access.startDate).toLocaleDateString("en-US")} – ` : ""}
+              Valid until {access.endDate ? new Date(access.endDate).toLocaleDateString("en-US") : "N/A"}
             </div>
           </div>
-        ))}
+        </div>
+        <div className="text-right">
+          <SteamStatusBadge status={status as SteamStatus} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-700/50 text-xs">
+        <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
+          <div className="text-zinc-500 text-[10px] uppercase">Remaining</div>
+          <div className="font-black text-cyan-400 text-base">{access.remainingVisits}</div>
+        </div>
+        <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
+          <div className="text-zinc-500 text-[10px] uppercase">Total Visits</div>
+          <div className="font-black text-white text-base">{access.totalVisits}</div>
+        </div>
+        <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
+          <div className="text-zinc-500 text-[10px] uppercase">Price</div>
+          <div className="font-black text-lime-400 text-base">{formatETB(access.price)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SteamUsageLog({
+  memberId,
+  liveUsage,
+}: {
+  memberId: string;
+  liveUsage?: CustomerSteamUsage[];
+}) {
+  const { state } = useGym();
+  const isLive = Boolean(liveUsage !== undefined);
+  const entries = liveUsage ?? state.steamUsage.filter(u => u.customerId === memberId);
+
+  return (
+    <div className={CARD}>
+      <h3 className="font-bold mb-3 flex items-center gap-2">
+        <Waves className="w-5 h-5 text-cyan-400" /> Steam History
+      </h3>
+      <div className="space-y-2">
+        {entries.length === 0 && <p className="text-sm text-zinc-500">No Steam entry recorded.</p>}
+        {isLive
+          ? (liveUsage || []).slice(0, 10).map(u => (
+              <div key={u.id} className="flex justify-between items-center text-sm py-2.5 border-b border-zinc-800/50">
+                <div className="flex items-center gap-2.5">
+                  <Drop weight="fill" className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <div>
+                    <div className="font-medium text-white">{u.note || "Steam Entry"}</div>
+                    <div className="text-[11px] text-zinc-400">
+                      Visits used: {u.visitsUsed} · Remaining: {u.remainingAfter}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-zinc-400 text-xs">
+                    {new Date(u.usedAt).toLocaleDateString("en-US")}
+                  </div>
+                  <div className="text-zinc-500 text-[11px]">
+                    {new Date(u.usedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                    {u.loggedBy ? ` · ${u.loggedBy}` : ""}
+                  </div>
+                </div>
+              </div>
+            ))
+          : (entries as SteamUsage[]).slice(0, 10).map(u => (
+              <div key={u.id} className="flex justify-between items-center text-sm py-2 border-b border-zinc-800/50">
+                <div className="flex items-center gap-2">
+                  <Drop weight="fill" className="w-4 h-4 text-cyan-400" />
+                  <span>{u.notes || "Steam Entry"}</span>
+                </div>
+                <div className="text-right">
+                  <div className="text-zinc-500 text-xs">{new Date(u.timestamp).toLocaleDateString("en-US")}</div>
+                  <div className="text-zinc-600 text-[11px]">{new Date(u.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })} · {u.recordedBy}</div>
+                </div>
+              </div>
+            ))}
       </div>
     </div>
   );
@@ -162,15 +238,65 @@ export function SteamCheckInButton({ member, actor }: { member: Member; actor: s
   );
 }
 
-export function SteamOverview({ memberId }: { memberId: string }) {
+export function SteamOverview({
+  memberId,
+  livePasses,
+}: {
+  memberId: string;
+  livePasses?: CustomerSteamAccess[];
+}) {
   const { state } = useGym();
-  const accesses = steamAccessFor(state, memberId);
+  const isLive = Boolean(livePasses !== undefined);
+  const accesses = livePasses ?? steamAccessFor(state, memberId);
+
   return (
     <div className={CARD}>
-      <h3 className="font-bold mb-3 flex items-center gap-2"><Waves className="w-5 h-5 text-cyan-400" /> Steam Access</h3>
+      <h3 className="font-bold mb-3 flex items-center gap-2">
+        <Waves className="w-5 h-5 text-cyan-400" /> Steam Access
+      </h3>
       <div className="space-y-2">
-        {accesses.length === 0 && <p className="text-sm text-zinc-500">No Steam access.</p>}
-        {accesses.map(a => <SteamAccessCard key={a.id} access={a} />)}
+        {accesses.length === 0 && (
+          <div className="bg-zinc-800/50 border border-zinc-700/70 rounded-xl p-5 text-center">
+            <Drop weight="fill" className="w-8 h-8 text-zinc-500 mx-auto mb-2" />
+            <div className="font-bold text-white text-sm">No Active Steam Pass</div>
+            <p className="text-xs text-zinc-400 mt-1">Purchase a Day Pass or Visit Package at reception.</p>
+          </div>
+        )}
+        {isLive
+          ? (livePasses || []).map(a => <LiveSteamAccessCard key={a.id} access={a} />)
+          : (accesses as SteamAccess[]).map(a => <SteamAccessCard key={a.id} access={a} />)}
+      </div>
+    </div>
+  );
+}
+
+export function SteamReceptionPurchaseNotice() {
+  const { state } = useGym();
+  const settings = state.settings;
+  const packagePrice = settings.steamPackagePrice || 1200;
+  const singlePrice = settings.steamPerVisitPrice || 150;
+  const packageVisits = settings.steamPackageVisits || 10;
+
+  return (
+    <div className={`${CARD} space-y-4`}>
+      <h3 className="font-bold text-lg flex items-center gap-2">
+        <Drop weight="fill" className="w-5 h-5 text-cyan-400" /> Purchase Steam Access
+      </h3>
+      <div className="bg-zinc-800/50 border border-zinc-700/60 rounded-xl p-4 space-y-2.5 text-sm">
+        <div className="flex justify-between items-center">
+          <span className="text-zinc-400">Single Session</span>
+          <span className="font-bold text-white">{formatETB(singlePrice)}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-zinc-400">{packageVisits}-Visit Package</span>
+          <span className="font-bold text-cyan-400">{formatETB(packagePrice)}</span>
+        </div>
+      </div>
+      <div className="p-4 bg-cyan-950/40 border border-cyan-800/50 rounded-xl text-xs text-cyan-200 space-y-1">
+        <div className="font-bold text-sm text-cyan-300">Purchase at Reception</div>
+        <p className="text-zinc-300">
+          Visit the gym reception to purchase a Steam Day Pass or Visit Package. Reception accepts Cash, CBE Birr, and Telebirr.
+        </p>
       </div>
     </div>
   );

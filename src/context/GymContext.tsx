@@ -181,9 +181,83 @@ export function toMinutes(time: string): number {
   return Number(parts[0] || 0) * 60 + Number(parts[1] || 0);
 }
 
-/** Checks that a member complies with their category access rules at the given time. */
-export function evaluateAccess(member: Member, rules: AccessRule[], at: Date = new Date()): AccessDecision {
+/** Parses a time slot string (e.g. "18:00 – 19:00", "09:00 - 10:00", "19:00 to 20:30") into start & end minutes. */
+export function parseTimeSlot(slot: string): { startMinutes: number; endMinutes: number } | null {
+  if (!slot || typeof slot !== "string") return null;
+  const match = slot.trim().match(/^(\d{1,2}:\d{2})\s*(?:[-–—~]|\bto\b)\s*(\d{1,2}:\d{2})$/i);
+  if (!match) return null;
+  const startMinutes = toMinutes(match[1]);
+  const endMinutes = toMinutes(match[2]);
+  if (isNaN(startMinutes) || isNaN(endMinutes) || startMinutes >= endMinutes) {
+    return null;
+  }
+  return { startMinutes, endMinutes };
+}
+
+/** Checks that a member complies with their category access rules (or aerobics group schedule) at the given time. */
+export function evaluateAccess(
+  member: Member,
+  rules: AccessRule[],
+  groups: AerobicsGroup[] = [],
+  at: Date = new Date()
+): AccessDecision {
   const category = member.category || "REGULAR";
+
+  // Aerobics category: authoritative schedule is the assigned AerobicsGroup
+  if (category === "AEROBICS") {
+    if (!member.aerobicsGroupId) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: "Aerobics member is not assigned to any group.",
+      };
+    }
+
+    const group = groups.find(g => g.id === member.aerobicsGroupId);
+    if (!group) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: "Assigned aerobics group not found.",
+      };
+    }
+
+    const day = dayName(at);
+    const dayMatches = group.days.includes(ALL_DAYS) || group.days.includes(day);
+    if (!dayMatches) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: `${group.name} does not meet on ${day}. Scheduled days: ${group.days.join(", ")}`,
+      };
+    }
+
+    const parsedSlot = parseTimeSlot(group.timeSlot);
+    if (!parsedSlot) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: "This aerobics group has an invalid schedule. Please contact management.",
+      };
+    }
+
+    const minutes = at.getHours() * 60 + at.getMinutes();
+    if (minutes < parsedSlot.startMinutes || minutes >= parsedSlot.endMinutes) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: `Outside ${group.name} class time (${group.timeSlot}).`,
+      };
+    }
+
+    return {
+      allowed: true,
+      status: "allowed",
+      message: `${group.name} · ${group.timeSlot} (${group.trainerName})`,
+    };
+  }
+
+  // Existing logic for every other category (REGULAR, STUDENT, MUSLIM)
   const day = dayName(at);
   const minutes = at.getHours() * 60 + at.getMinutes();
   const catRules = rules.filter(r => r.active && r.category === category);
