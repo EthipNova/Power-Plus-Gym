@@ -1,7 +1,8 @@
-import { createContext, useContext, useReducer, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useEffect, type ReactNode } from "react";
 import type { Member, Plan, Payment, Expense, Visit, EmailLog, StaffUser, GymSettings, AuditLog, AuthUser, MemberStatus, Trainer, GymClass, ClassAttendee, TrainerClientNote, CustomerCategory, AccessRule, AerobicsGroup, CategoryLabel, AccessDecision, SteamAccess, SteamUsage, SteamStatus, SteamType, Language, Locker, LockerAssignment } from "../types";
 import { MEMBERS, PLANS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, DEFAULT_SETTINGS, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, CATEGORY_LABELS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
 import { DEFAULT_LANGUAGE, translate } from "../i18n/translations";
+import { getCurrentSession, subscribeToAuthChanges, resolveTrustedUserRole, signOutUser } from "../services/auth";
 
 export interface State {
   members: Member[];
@@ -26,10 +27,12 @@ export interface State {
   lockers: Locker[];
   lockerAssignments: LockerAssignment[];
   currentUser: AuthUser | null;
+  isAuthInitializing: boolean;
 }
 
 type Action =
   | { type: "SET_USER"; payload: AuthUser | null }
+  | { type: "SET_AUTH_INITIALIZING"; payload: boolean }
   | { type: "ADD_MEMBER"; payload: Member }
   | { type: "UPDATE_MEMBER"; payload: Member }
   | { type: "DELETE_MEMBER"; payload: string }
@@ -91,11 +94,13 @@ const initialState: State = {
   lockers: LOCKERS,
   lockerAssignments: LOCKER_ASSIGNMENTS,
   currentUser: null,
+  isAuthInitializing: true,
 };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "SET_USER": return { ...state, currentUser: action.payload };
+    case "SET_AUTH_INITIALIZING": return { ...state, isAuthInitializing: action.payload };
     case "ADD_MEMBER": return { ...state, members: [...state.members, action.payload] };
     case "UPDATE_MEMBER": return { ...state, members: state.members.map(m => m.id === action.payload.id ? action.payload : m) };
     case "DELETE_MEMBER": return { ...state, members: state.members.filter(m => m.id !== action.payload) };
@@ -146,6 +151,59 @@ const GymContext = createContext<{ state: State; dispatch: React.Dispatch<Action
 
 export function GymProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initAuth() {
+      try {
+        const { session } = await getCurrentSession();
+        if (session?.user && isMounted) {
+          const trusted = await resolveTrustedUserRole(session.user.id);
+          if (trusted && isMounted) {
+            dispatch({ type: "SET_USER", payload: trusted.authUser });
+          } else if (isMounted) {
+            // Keep portal access blocked if no trusted active role is established
+            await signOutUser();
+            dispatch({ type: "SET_USER", payload: null });
+          }
+        }
+      } catch (err) {
+        console.error("Auth session initialization error:", err);
+      } finally {
+        if (isMounted) {
+          dispatch({ type: "SET_AUTH_INITIALIZING", payload: false });
+        }
+      }
+    }
+
+    initAuth();
+
+    const unsubscribe = subscribeToAuthChanges(async (event, session) => {
+      if (!isMounted) return;
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (session?.user) {
+          const trusted = await resolveTrustedUserRole(session.user.id);
+          if (trusted && isMounted) {
+            dispatch({ type: "SET_USER", payload: trusted.authUser });
+          } else if (isMounted) {
+            await signOutUser();
+            dispatch({ type: "SET_USER", payload: null });
+          }
+        }
+      } else if (event === "SIGNED_OUT") {
+        if (isMounted) {
+          dispatch({ type: "SET_USER", payload: null });
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   return <GymContext.Provider value={{ state, dispatch }}>{children}</GymContext.Provider>;
 }
 
@@ -181,9 +239,83 @@ export function toMinutes(time: string): number {
   return Number(parts[0] || 0) * 60 + Number(parts[1] || 0);
 }
 
-/** Checks that a member complies with their category access rules at the given time. */
-export function evaluateAccess(member: Member, rules: AccessRule[], at: Date = new Date()): AccessDecision {
+/** Parses a time slot string (e.g. "18:00 – 19:00", "09:00 - 10:00", "19:00 to 20:30") into start & end minutes. */
+export function parseTimeSlot(slot: string): { startMinutes: number; endMinutes: number } | null {
+  if (!slot || typeof slot !== "string") return null;
+  const match = slot.trim().match(/^(\d{1,2}:\d{2})\s*(?:[-–—~]|\bto\b)\s*(\d{1,2}:\d{2})$/i);
+  if (!match) return null;
+  const startMinutes = toMinutes(match[1]);
+  const endMinutes = toMinutes(match[2]);
+  if (isNaN(startMinutes) || isNaN(endMinutes) || startMinutes >= endMinutes) {
+    return null;
+  }
+  return { startMinutes, endMinutes };
+}
+
+/** Checks that a member complies with their category access rules (or aerobics group schedule) at the given time. */
+export function evaluateAccess(
+  member: Member,
+  rules: AccessRule[],
+  groups: AerobicsGroup[] = [],
+  at: Date = new Date()
+): AccessDecision {
   const category = member.category || "REGULAR";
+
+  // Aerobics category: authoritative schedule is the assigned AerobicsGroup
+  if (category === "AEROBICS") {
+    if (!member.aerobicsGroupId) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: "Aerobics member is not assigned to any group.",
+      };
+    }
+
+    const group = groups.find(g => g.id === member.aerobicsGroupId);
+    if (!group) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: "Assigned aerobics group not found.",
+      };
+    }
+
+    const day = dayName(at);
+    const dayMatches = group.days.includes(ALL_DAYS) || group.days.includes(day);
+    if (!dayMatches) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: `${group.name} does not meet on ${day}. Scheduled days: ${group.days.join(", ")}`,
+      };
+    }
+
+    const parsedSlot = parseTimeSlot(group.timeSlot);
+    if (!parsedSlot) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: "This aerobics group has an invalid schedule. Please contact management.",
+      };
+    }
+
+    const minutes = at.getHours() * 60 + at.getMinutes();
+    if (minutes < parsedSlot.startMinutes || minutes >= parsedSlot.endMinutes) {
+      return {
+        allowed: false,
+        status: "denied",
+        message: `Outside ${group.name} class time (${group.timeSlot}).`,
+      };
+    }
+
+    return {
+      allowed: true,
+      status: "allowed",
+      message: `${group.name} · ${group.timeSlot} (${group.trainerName})`,
+    };
+  }
+
+  // Existing logic for every other category (REGULAR, STUDENT, MUSLIM)
   const day = dayName(at);
   const minutes = at.getHours() * 60 + at.getMinutes();
   const catRules = rules.filter(r => r.active && r.category === category);

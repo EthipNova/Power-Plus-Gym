@@ -104,7 +104,7 @@ function CheckInView() {
       toast.error(t("staff.expiredCannot", { name: member.name, status: t(`status.${status}`).toLowerCase() }));
       return;
     }
-    const decision = evaluateAccess(member, state.accessRules, new Date());
+    const decision = evaluateAccess(member, state.accessRules, state.aerobicsGroups, new Date());
     if (!decision.allowed) {
       recordDeniedAudit(member, decision);
       setRefused({ member, decision });

@@ -116,6 +116,9 @@ export interface AuthUser {
   role: Role;
   memberId?: string;
   trainerId?: string;
+  category?: CustomerCategory;
+  customerCode?: string;
+  status?: string;
 }
 
 export interface Trainer {

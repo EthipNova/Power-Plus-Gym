@@ -100,6 +100,10 @@ export const DEMO_CREDENTIALS = {
   owner: { id: "s1", name: "Dawit Owner", role: "owner" as const },
   staff: { id: "s2", name: "Selam", role: "staff" as const },
   member: { id: "m1", name: "Abebe Kebede", role: "member" as const },
+  member_regular: { id: "m1", name: "Abebe Kebede", role: "member" as const },
+  // TEMPORARY development bridge: maps the Aerobics demo customer to live PP-008 UUID.
+  // This will later be replaced by authenticated identity resolution (auth.uid() -> customers.user_id).
+  member_aerobics: { id: "11111111-1111-1111-1111-111111111108", name: "Aerobics Member", role: "member" as const },
   trainer: { id: "t1", name: "Kidus Hailu", role: "trainer" as const },
 };
 
