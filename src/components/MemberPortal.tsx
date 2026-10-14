@@ -60,10 +60,20 @@ export default function MemberPortal() {
       currentMemberId === REGULAR_DEMO_UUID ||
       state.members.find(m => m.id === currentMemberId)?.category === "REGULAR");
 
+  const isMuslimUser =
+    !isAerobicsUser &&
+    !isRegularUser &&
+    (state.currentUser?.category === "MUSLIM" ||
+      currentMemberId === "11111111-1111-1111-1111-111111111107" ||
+      currentMemberId === "m7" ||
+      state.members.find(m => m.id === currentMemberId)?.category === "MUSLIM");
+
   // Async state for Aerobics live Supabase integration
   const [aerobicsState, setAerobicsState] = useState<AerobicsDashboardState>({ status: "loading" });
   // Async state for Regular live Supabase integration
   const [regularState, setRegularState] = useState<RegularDashboardState>({ status: "loading" });
+  // Async state for Muslim live Supabase integration
+  const [muslimState, setMuslimState] = useState<RegularDashboardState>({ status: "loading" });
   const [fetchTrigger, setFetchTrigger] = useState(0);
 
   useEffect(() => {
@@ -140,8 +150,47 @@ export default function MemberPortal() {
     }
   }, [isRegularUser, regularState, state.currentUser, dispatch]);
 
+  useEffect(() => {
+    if (!isMuslimUser) return;
+    let isMounted = true;
+    setMuslimState({ status: "loading" });
+
+    // Target the live customer UUID for Muslim customer
+    const targetUuid = currentMemberId === "m7"
+      ? "11111111-1111-1111-1111-111111111107"
+      : currentMemberId;
+
+    fetchRegularDashboardData(targetUuid)
+      .then(res => {
+        if (isMounted) setMuslimState(res);
+      })
+      .catch(err => {
+        if (isMounted) setMuslimState({ status: "error", error: "Failed to connect to database" });
+      });
+
+    return () => { isMounted = false; };
+  }, [isMuslimUser, currentMemberId, fetchTrigger]);
+
+  // Synchronize currentUser.name in global state with live Supabase name for Muslim customers
+  useEffect(() => {
+    if (isMuslimUser && muslimState.status === "success" && state.currentUser) {
+      const liveName = muslimState.data.customer.fullName;
+      if (liveName && state.currentUser.name !== liveName) {
+        dispatch({
+          type: "SET_USER",
+          payload: {
+            ...state.currentUser,
+            name: liveName,
+          },
+        });
+      }
+    }
+  }, [isMuslimUser, muslimState, state.currentUser, dispatch]);
+
   // Non-live categories: existing in-memory lookup
-  const fallbackMember = state.members.find(m => m.id === currentMemberId);
+  const fallbackMember = state.members.find(
+    m => m.id === currentMemberId || m.memberId === currentMemberId || (state.currentUser?.customerCode && m.memberId === state.currentUser.customerCode)
+  );
 
   // If Aerobics user, handle async state gates
   if (isAerobicsUser) {
@@ -224,7 +273,47 @@ export default function MemberPortal() {
         </div>
       );
     }
-  } else if (!fallbackMember) {
+  } else if (isMuslimUser) {
+    if (muslimState.status === "loading") {
+      return (
+        <div className="min-h-[100dvh] bg-zinc-950 text-white flex flex-col items-center justify-center p-4">
+          <div className="w-10 h-10 border-4 border-lime-400/20 border-t-lime-400 rounded-full animate-spin mb-4" />
+          <h2 className="text-lg font-bold">Loading Muslim Member Dashboard...</h2>
+          <p className="text-xs text-zinc-500 mt-1">Retrieving live customer membership and attendance from Supabase</p>
+        </div>
+      );
+    }
+
+    if (muslimState.status === "error") {
+      return (
+        <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-red-500/30 rounded-2xl p-6 max-w-md text-center">
+            <XCircle weight="fill" className="w-12 h-12 text-red-400 mx-auto mb-3" />
+            <h2 className="text-xl font-bold mb-2 text-white">Unable to Load Dashboard</h2>
+            <p className="text-zinc-400 text-sm mb-5">{muslimState.error}</p>
+            <button
+              onClick={() => setFetchTrigger(prev => prev + 1)}
+              className="bg-lime-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-lime-300 transition-colors inline-flex items-center gap-2"
+            >
+              <ArrowClockwise weight="bold" className="w-4 h-4" /> Try Again
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (muslimState.status === "not_found") {
+      return (
+        <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md text-center">
+            <User className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+            <h2 className="text-xl font-bold mb-2 text-white">{t("member.noProfile")}</h2>
+            <p className="text-zinc-500 text-sm">{muslimState.message}</p>
+          </div>
+        </div>
+      );
+    }
+  } else if (!fallbackMember && !state.currentUser) {
     return (
       <div className="min-h-[100dvh] bg-zinc-950 text-white flex items-center justify-center p-4">
         <div className="text-center">
@@ -378,6 +467,59 @@ export default function MemberPortal() {
       category: "REGULAR" as CustomerCategory,
       accessStatus: "allowed" as const,
     }));
+  } else if (isMuslimUser && muslimState.status === "success") {
+    const { customer, membership, plan: livePlan, attendance, membershipSummary } = muslimState.data;
+    category = "MUSLIM";
+    member = {
+      id: customer.id,
+      name: customer.fullName,
+      phone: customer.phone,
+      email: customer.email || "",
+      memberId: customer.customerCode,
+      planId: livePlan?.id || "",
+      joinDate: customer.joinDate || "—",
+      expiryDate: membership?.endDate || "—",
+      status: (customer.status.toLowerCase() as any) || "active",
+      lastVisit: attendance.lastVisit,
+      emergencyContact: "",
+      emergencyPhone: "",
+      medicalNotes: "",
+      emailNotifications: true,
+      balanceDue: 0,
+      category: "MUSLIM",
+    };
+
+    plan = livePlan
+      ? {
+          id: livePlan.id,
+          name: livePlan.name,
+          price: livePlan.price,
+          durationDays: livePlan.durationDays,
+          perks: livePlan.benefits
+            ? livePlan.benefits.split(",").map(b => b.trim())
+            : [livePlan.description || "Gym Access"],
+          active: livePlan.isActive,
+          applicableCategories: ["MUSLIM"],
+        }
+      : undefined;
+
+    group = undefined;
+    trainer = undefined;
+
+    daysRemaining = membershipSummary.daysRemaining;
+    totalDays = membershipSummary.durationDays || (livePlan?.durationDays || 30);
+    progress = membershipSummary.progressPercent;
+    expired = membershipSummary.isExpired;
+    countdownState = !membership ? "expired" : expired ? "expired" : membershipSummary.isExpiring ? "expiring" : "active";
+
+    visits = attendance.recent.map(a => ({
+      id: a.id,
+      memberId: customer.id,
+      timestamp: a.checkedInAt,
+      checkedInBy: a.checkInMethod,
+      category: "MUSLIM" as CustomerCategory,
+      accessStatus: "allowed" as const,
+    }));
   } else {
     // Path for non-live / categorized members (Student, Muslim, etc.)
     const defaultMember: Member = {
@@ -413,7 +555,7 @@ export default function MemberPortal() {
 
   const CategoryIcon = CATEGORY_ICONS[category];
   const rules = state.accessRules.filter(r => r.category === category && r.active);
-  const payments = isRegularUser && regularState.status === "success"
+  const payments = (isRegularUser && regularState.status === "success")
     ? regularState.data.payments.map(p => ({
         id: p.id,
         memberId: member.id,
@@ -423,7 +565,17 @@ export default function MemberPortal() {
         type: (p.serviceType.toLowerCase() as any) || "membership",
         note: p.notes || "",
       }))
-    : isAerobicsUser && aerobicsState.status === "success"
+    : (isMuslimUser && muslimState.status === "success")
+    ? muslimState.data.payments.map(p => ({
+        id: p.id,
+        memberId: member.id,
+        amount: p.amount,
+        date: p.paidAt ? p.paidAt.split("T")[0] : (p.createdAt ? p.createdAt.split("T")[0] : "—"),
+        method: (p.paymentMethod.toLowerCase() as any) || "cash",
+        type: (p.serviceType.toLowerCase() as any) || "membership",
+        note: p.notes || "",
+      }))
+    : (isAerobicsUser && aerobicsState.status === "success")
     ? aerobicsState.data.payments.map(p => ({
         id: p.id,
         memberId: member.id,
@@ -434,9 +586,11 @@ export default function MemberPortal() {
         note: p.notes || "",
       }))
     : state.payments.filter(p => p.memberId === member.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const myLocker = isRegularUser && regularState.status === "success"
+  const myLocker = (isRegularUser && regularState.status === "success")
     ? regularState.data.locker
-    : isAerobicsUser && aerobicsState.status === "success"
+    : (isMuslimUser && muslimState.status === "success")
+    ? muslimState.data.locker
+    : (isAerobicsUser && aerobicsState.status === "success")
     ? aerobicsState.data.locker
     : memberActiveLocker(state, member.id);
   const steamLeft = state.steamAccess
@@ -490,6 +644,11 @@ export default function MemberPortal() {
                         {regularState.data.customer.status.toUpperCase()}
                       </span>
                     )}
+                    {isMuslimUser && muslimState.status === "success" && (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-zinc-800 text-lime-400 border border-lime-400/20">
+                        {muslimState.data.customer.status.toUpperCase()}
+                      </span>
+                    )}
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${countdownState === "active" ? "bg-lime-400/20 text-lime-400" : countdownState === "expiring" ? "bg-yellow-400/20 text-yellow-400" : "bg-red-400/20 text-red-400"}`}>{t(`countdown.${countdownState}`)}</span>
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300">
                       <CategoryIcon weight="fill" className="w-3.5 h-3.5 text-lime-400" />{categoryLabelOf(state, category)}
@@ -502,14 +661,14 @@ export default function MemberPortal() {
                   </div>
                   <p className="text-zinc-500 text-sm">{member.memberId} · {t("member.memberSince", { date: formatDateDisplay(member.joinDate) })}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-sm">
-                    <span className="text-zinc-400">{t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || "No Plan"}</span></span>
+                    <span className="text-zinc-400">{t("countdown.plan")}: <span className="text-white font-semibold">{plan?.name || (isMuslimUser ? "No active plan" : "No Plan")}</span></span>
                     {plan?.price != null && (
                       <span className="text-zinc-400">Price: <span className="text-lime-400 font-semibold">{plan.price} ETB</span></span>
                     )}
-                    {member.joinDate && member.joinDate !== "—" && (
+                    {plan && member.joinDate && member.joinDate !== "—" && (
                       <span className="text-zinc-400">Start: <span className="text-white font-semibold">{formatDateDisplay(member.joinDate)}</span></span>
                     )}
-                    {member.expiryDate && member.expiryDate !== "—" && (
+                    {plan && member.expiryDate && member.expiryDate !== "—" && (
                       <span className="text-zinc-400">End: <span className="text-white font-semibold">{formatDateDisplay(member.expiryDate)}</span></span>
                     )}
                     <span className="text-zinc-400">{t("countdown.steamLeft")}: <span className="text-cyan-400 font-semibold">{steamLeft}</span></span>
@@ -545,9 +704,11 @@ export default function MemberPortal() {
                 },
                 {
                   label: t("member.totalVisits"),
-                  value: isRegularUser && regularState.status === "success"
+                  value: (isRegularUser && regularState.status === "success")
                     ? String(regularState.data.attendance.total)
-                    : isAerobicsUser && aerobicsState.status === "success"
+                    : (isMuslimUser && muslimState.status === "success")
+                    ? String(muslimState.data.attendance.total)
+                    : (isAerobicsUser && aerobicsState.status === "success")
                     ? String(aerobicsState.data.attendanceTotal)
                     : String(visits.length),
                   icon: Flame,
@@ -558,8 +719,8 @@ export default function MemberPortal() {
                   icon: CreditCard,
                 },
                 {
-                  label: isRegularUser ? "Balance Due" : t("member.balanceDue"),
-                  value: isRegularUser ? "—" : formatETB(member.balanceDue),
+                  label: isRegularUser || isMuslimUser ? "Balance Due" : t("member.balanceDue"),
+                  value: isMuslimUser ? "Not available" : isRegularUser ? "—" : formatETB(member.balanceDue),
                   icon: Lightning,
                 },
               ].map((s, i) => (
