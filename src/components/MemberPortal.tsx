@@ -48,13 +48,15 @@ export default function MemberPortal() {
   // Determine customer category session
   const currentMemberId = state.currentUser?.memberId || "";
   const isAerobicsUser =
+    state.currentUser?.category === "AEROBICS" ||
     currentMemberId === DEMO_CREDENTIALS.member_aerobics.id ||
     currentMemberId === "m8" ||
     state.members.find(m => m.id === currentMemberId)?.category === "AEROBICS";
 
   const isRegularUser =
     !isAerobicsUser &&
-    (currentMemberId === "m1" ||
+    (state.currentUser?.category === "REGULAR" ||
+      currentMemberId === "m1" ||
       currentMemberId === REGULAR_DEMO_UUID ||
       state.members.find(m => m.id === currentMemberId)?.category === "REGULAR");
 
@@ -377,9 +379,27 @@ export default function MemberPortal() {
       accessStatus: "allowed" as const,
     }));
   } else {
-    // Standard mock data path for non-live categories (Student, Muslim, etc.)
-    member = fallbackMember!;
-    category = member.category || "REGULAR";
+    // Path for non-live / categorized members (Student, Muslim, etc.)
+    const defaultMember: Member = {
+      id: state.currentUser?.id || "unknown",
+      name: state.currentUser?.name || "Member",
+      phone: "",
+      email: "",
+      memberId: state.currentUser?.customerCode || state.currentUser?.memberId || "PP-MEMBER",
+      planId: "p1",
+      category: state.currentUser?.category || "REGULAR",
+      joinDate: new Date().toISOString().slice(0, 10),
+      expiryDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+      status: "active",
+      lastVisit: null,
+      emergencyContact: "",
+      emergencyPhone: "",
+      medicalNotes: "",
+      emailNotifications: true,
+      balanceDue: 0,
+    };
+    member = fallbackMember || defaultMember;
+    category = state.currentUser?.category || member.category || "REGULAR";
     plan = state.plans.find(p => p.id === member.planId);
     group = member.aerobicsGroupId ? state.aerobicsGroups.find(g => g.id === member.aerobicsGroupId) : undefined;
     trainer = group?.trainerId ? state.trainers.find(t => t.id === group.trainerId) : undefined;

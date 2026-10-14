@@ -1,7 +1,8 @@
-import { createContext, useContext, useReducer, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useEffect, type ReactNode } from "react";
 import type { Member, Plan, Payment, Expense, Visit, EmailLog, StaffUser, GymSettings, AuditLog, AuthUser, MemberStatus, Trainer, GymClass, ClassAttendee, TrainerClientNote, CustomerCategory, AccessRule, AerobicsGroup, CategoryLabel, AccessDecision, SteamAccess, SteamUsage, SteamStatus, SteamType, Language, Locker, LockerAssignment } from "../types";
 import { MEMBERS, PLANS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, DEFAULT_SETTINGS, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, CATEGORY_LABELS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
 import { DEFAULT_LANGUAGE, translate } from "../i18n/translations";
+import { getCurrentSession, subscribeToAuthChanges, resolveTrustedUserRole, signOutUser } from "../services/auth";
 
 export interface State {
   members: Member[];
@@ -26,10 +27,12 @@ export interface State {
   lockers: Locker[];
   lockerAssignments: LockerAssignment[];
   currentUser: AuthUser | null;
+  isAuthInitializing: boolean;
 }
 
 type Action =
   | { type: "SET_USER"; payload: AuthUser | null }
+  | { type: "SET_AUTH_INITIALIZING"; payload: boolean }
   | { type: "ADD_MEMBER"; payload: Member }
   | { type: "UPDATE_MEMBER"; payload: Member }
   | { type: "DELETE_MEMBER"; payload: string }
@@ -91,11 +94,13 @@ const initialState: State = {
   lockers: LOCKERS,
   lockerAssignments: LOCKER_ASSIGNMENTS,
   currentUser: null,
+  isAuthInitializing: true,
 };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "SET_USER": return { ...state, currentUser: action.payload };
+    case "SET_AUTH_INITIALIZING": return { ...state, isAuthInitializing: action.payload };
     case "ADD_MEMBER": return { ...state, members: [...state.members, action.payload] };
     case "UPDATE_MEMBER": return { ...state, members: state.members.map(m => m.id === action.payload.id ? action.payload : m) };
     case "DELETE_MEMBER": return { ...state, members: state.members.filter(m => m.id !== action.payload) };
@@ -146,6 +151,59 @@ const GymContext = createContext<{ state: State; dispatch: React.Dispatch<Action
 
 export function GymProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initAuth() {
+      try {
+        const { session } = await getCurrentSession();
+        if (session?.user && isMounted) {
+          const trusted = await resolveTrustedUserRole(session.user.id);
+          if (trusted && isMounted) {
+            dispatch({ type: "SET_USER", payload: trusted.authUser });
+          } else if (isMounted) {
+            // Keep portal access blocked if no trusted active role is established
+            await signOutUser();
+            dispatch({ type: "SET_USER", payload: null });
+          }
+        }
+      } catch (err) {
+        console.error("Auth session initialization error:", err);
+      } finally {
+        if (isMounted) {
+          dispatch({ type: "SET_AUTH_INITIALIZING", payload: false });
+        }
+      }
+    }
+
+    initAuth();
+
+    const unsubscribe = subscribeToAuthChanges(async (event, session) => {
+      if (!isMounted) return;
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (session?.user) {
+          const trusted = await resolveTrustedUserRole(session.user.id);
+          if (trusted && isMounted) {
+            dispatch({ type: "SET_USER", payload: trusted.authUser });
+          } else if (isMounted) {
+            await signOutUser();
+            dispatch({ type: "SET_USER", payload: null });
+          }
+        }
+      } else if (event === "SIGNED_OUT") {
+        if (isMounted) {
+          dispatch({ type: "SET_USER", payload: null });
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   return <GymContext.Provider value={{ state, dispatch }}>{children}</GymContext.Provider>;
 }
 
