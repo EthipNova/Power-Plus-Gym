@@ -9,7 +9,7 @@ import AerobicsProfileView from "./AerobicsProfileView";
 import RegularCustomerDashboard from "./RegularCustomerDashboard";
 import RegularRenewView from "./RegularRenewView";
 import RegularProfileView from "./RegularProfileView";
-import type { CustomerCategory, Member, Payment, AerobicsGroup, Trainer } from "../types";
+import type { CustomerCategory, Member, MemberStatus, Payment, AerobicsGroup, Trainer } from "../types";
 import { fetchAerobicsDashboardData, type AerobicsDashboardState } from "../services/aerobicsDashboardService";
 import { fetchRegularDashboardData, type RegularDashboardState } from "../services/regularDashboardService";
 import { fetchStudentDashboardData, type StudentDashboardState } from "../services/studentDashboardService";
@@ -22,6 +22,35 @@ const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Spar
 const METHOD_LABELS: Record<string, string> = { telebirr: "Telebirr", cbe_birr: "CBE Birr", cash: "Espèces", card: "Carte" };
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 const INPUT = "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50";
+
+function normalizeMemberStatus(value: string): MemberStatus {
+  switch (value.toLowerCase()) {
+    case "active": return "active";
+    case "expiring": return "expiring";
+    case "expired": return "expired";
+    case "inactive": return "inactive";
+    case "blocked": return "blocked";
+    default: return "inactive";
+  }
+}
+
+function normalizePaymentMethod(value: string): Payment["method"] {
+  switch (value.toLowerCase()) {
+    case "telebirr": return "telebirr";
+    case "cbe_birr": return "cbe_birr";
+    case "card": return "card";
+    default: return "cash";
+  }
+}
+
+function normalizePaymentType(value: string): Payment["type"] {
+  switch (value.toLowerCase()) {
+    case "renewal": return "renewal";
+    case "adjustment": return "adjustment";
+    case "steam": return "steam";
+    default: return "membership";
+  }
+}
 
 /**
  * TEMPORARY development bridge: maps the legacy demo regular member "m1"
@@ -83,7 +112,7 @@ export default function MemberPortal() {
       .then(res => {
         if (isMounted) setAerobicsState(res);
       })
-      .catch(err => {
+      .catch(() => {
         if (isMounted) setAerobicsState({ status: "error", error: "Failed to connect to database" });
       });
 
@@ -104,7 +133,7 @@ export default function MemberPortal() {
       .then(res => {
         if (isMounted) setRegularState(res);
       })
-      .catch(err => {
+      .catch(() => {
         if (isMounted) setRegularState({ status: "error", error: "Failed to connect to database" });
       });
 
@@ -117,11 +146,20 @@ export default function MemberPortal() {
     setStudentState({ status: "loading" });
     fetchStudentDashboardData().then(result => {
       if (isMounted) setStudentState(result);
-    }).catch(() => {
-      if (isMounted) setStudentState({ status: "error", error: "Failed to connect to database." });
+    }).catch((error: unknown) => {
+      console.error("[StudentDashboard] Unexpected dashboard load failure", {
+        name: error instanceof Error ? error.name : "unknown",
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      if (isMounted) setStudentState({
+        status: "error",
+        error: error instanceof TypeError
+          ? "The database could not be reached. Check your connection and retry."
+          : "Student dashboard data could not be loaded. Retry in a moment.",
+      });
     });
     return () => { isMounted = false; };
-  }, [isStudentUser, fetchTrigger]);
+  }, [isStudentUser, state.currentUser?.id, state.currentUser?.role, state.currentUser?.category, fetchTrigger]);
 
   // Synchronize currentUser.name in global state with live Supabase name for Aerobics customers
   useEffect(() => {
@@ -303,7 +341,7 @@ export default function MemberPortal() {
       planId: membership?.plan?.id || "",
       joinDate: membership?.startDate || "—",
       expiryDate: membership?.endDate || "—",
-      status: membership ? ((membership.status.toLowerCase() as any) || "active") : "expired",
+      status: membership ? normalizeMemberStatus(membership.status) : "expired",
       lastVisit: attendance[0]?.checkedInAt || null,
       emergencyContact: "",
       emergencyPhone: "",
@@ -379,7 +417,7 @@ export default function MemberPortal() {
       planId: livePlan?.id || "",
       joinDate: membership?.startDate || customer.joinDate || "—",
       expiryDate: membership?.endDate || "—",
-      status: (customer.status.toLowerCase() as any) || "active",
+      status: normalizeMemberStatus(customer.status),
       lastVisit: attendance.lastVisit,
       emergencyContact: "",
       emergencyPhone: "",
@@ -463,8 +501,8 @@ export default function MemberPortal() {
         memberId: member.id,
         amount: p.amount,
         date: p.paidAt ? p.paidAt.split("T")[0] : (p.createdAt ? p.createdAt.split("T")[0] : "—"),
-        method: (p.paymentMethod.toLowerCase() as any) || "cash",
-        type: (p.serviceType.toLowerCase() as any) || "membership",
+        method: normalizePaymentMethod(p.paymentMethod),
+        type: normalizePaymentType(p.serviceType),
         note: p.notes || "",
       }))
     : isAerobicsUser && aerobicsState.status === "success"
@@ -473,8 +511,8 @@ export default function MemberPortal() {
         memberId: member.id,
         amount: p.amount,
         date: p.paidAt ? p.paidAt.split("T")[0] : (p.createdAt ? p.createdAt.split("T")[0] : "—"),
-        method: (p.paymentMethod.toLowerCase() as any) || "cash",
-        type: (p.serviceType.toLowerCase() as any) || "membership",
+        method: normalizePaymentMethod(p.paymentMethod),
+        type: normalizePaymentType(p.serviceType),
         note: p.notes || "",
       }))
     : isStudentUser && studentState.status === "success"
@@ -706,6 +744,30 @@ export default function MemberPortal() {
                     <p className="text-xs text-zinc-500">Show your student card at reception to activate the reduced rate.</p>
                   </div>
                 )}
+                {category === "STUDENT" && isStudentUser && studentState.status === "success" && (
+                  <div className="mt-4 border-t border-zinc-800 pt-4">
+                    <h4 className="font-semibold text-sm mb-2">Upcoming classes</h4>
+                    {studentState.data.classSchedule.length === 0 ? (
+                      <p className="text-sm text-zinc-500">No upcoming class bookings.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {studentState.data.classSchedule.map(session => (
+                          <div key={session.id} className="rounded-xl bg-zinc-800/50 p-3 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="font-semibold">{session.className}</span>
+                              <span className="text-xs text-zinc-400">{session.bookingStatus}</span>
+                            </div>
+                            <p className="mt-1 text-xs text-zinc-400">
+                              {new Date(session.startAt).toLocaleString(locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                              {session.endAt ? ` – ${new Date(session.endAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}` : ""}
+                            </p>
+                            {session.description && <p className="mt-1 text-xs text-zinc-500">{session.description}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-zinc-600 mt-3">Only reception or the owner can change your category.</p>
               </div>
             )}
@@ -916,8 +978,8 @@ function CustomerSteamView({
       setPasses(accessRes.data);
       setUsageLogs(usageRes.data);
       setLoading(false);
-    } catch (err: any) {
-      setError(err?.message || "Unable to load Steam information. Please try again.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to load Steam information. Please try again.");
       setLoading(false);
     }
   }, [customerId]);

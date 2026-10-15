@@ -58,6 +58,8 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
               ? "Student plan access is temporarily unavailable. Please try again later."
               : error.kind === "invalid_category"
                 ? "Student plans could not be matched. Please contact reception."
+                : error.kind === "schema"
+                  ? "Student plan data is not configured correctly. Please contact the gym administrator."
                 : "Student plans are temporarily unavailable. Please try again later."
           : "Student plans are temporarily unavailable. Please try again later.";
         setStudentPlansState("error");

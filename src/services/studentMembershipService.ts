@@ -78,7 +78,7 @@ export async function fetchPlansForCategory(category: string): Promise<StudentPl
   if (error) {
     const responseStatus = (error as typeof error & { status?: unknown }).status;
     const status = typeof responseStatus === "number" ? responseStatus : undefined;
-    const kind: PlanLoadFailureKind = error.code === "42703" || error.code === "PGRST204"
+    const kind: PlanLoadFailureKind = ["42703", "42P01", "PGRST202", "PGRST204", "PGRST205"].includes(error.code ?? "")
       ? "schema"
       : error.code === "42501" || status === 401 || status === 403
         ? "permission"

@@ -422,3 +422,7 @@ REVOKE ALL ON FUNCTION public.review_student_membership_payment(UUID, BOOLEAN) F
 GRANT EXECUTE ON FUNCTION public.review_student_membership_payment(UUID, BOOLEAN) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+-- Remove confirmed development policies that expose every member row to anonymous users.
+DROP POLICY IF EXISTS dev_attendance_select ON public.attendance;
+DROP POLICY IF EXISTS dev_memberships_select ON public.memberships;
