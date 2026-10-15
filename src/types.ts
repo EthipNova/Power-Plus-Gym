@@ -223,7 +223,7 @@ export type SteamModel = "package" | "per_visit" | "both";
 export type SteamType = "package" | "per_visit";
 
 /** Statut calculé d'un accès Steam. */
-export type SteamStatus = "Active" | "Expiring Soon" | "Expired";
+export type SteamStatus = "Active" | "Expiring Soon" | "Expired" | "Cancelled";
 
 /** Accès Steam (forfait ou séance à l'unité) rattaché à un client. */
 export interface SteamAccess {
@@ -274,6 +274,7 @@ export interface Locker {
   status: LockerStatus;
   notes?: string;
   createdAt: string;
+  isActive?: boolean;
 }
 
 /** Attribution d'un casier à un client (trace complète). */
@@ -290,4 +291,6 @@ export interface LockerAssignment {
   lostKeyFee: number;
   issuedBy: string;
   notes: string;
+  keyNumber?: string;
+  returnedBy?: string;
 }
