@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { SquaresFour, Calendar, Users, Plus, Trash, PencilSimple, Check, X } from "@phosphor-icons/react";
+import { SquaresFour, Calendar, Plus, Trash, PencilSimple, Check, X } from "@phosphor-icons/react";
 import { useGym, generateId, addAudit, categoryLabelOf } from "../context/GymContext";
-import { ALL_CATEGORIES, ALL_DAYS, WEEK_DAYS } from "../constants";
-import type { AccessRule, AerobicsGroup, CategoryLabel, CustomerCategory } from "../types";
+import { ALL_DAYS, WEEK_DAYS } from "../constants";
+import type { AccessRule, CategoryLabel, CustomerCategory } from "../types";
 import { toast } from "sonner";
+import { createCategory, updateCategory, deleteCategory, PROTECTED_SYSTEM_CATEGORIES } from "../services/categories";
 
 const DAY_OPTIONS = [...WEEK_DAYS, ALL_DAYS];
 const INPUT = "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50";
@@ -17,43 +18,129 @@ function Chip({ active, children, onClick }: { active: boolean; children: string
   );
 }
 
-/* ------------------ 1. Editable category labels ------------------ */
+/* ------------------ 1. Editable customer categories ------------------ */
 function CategoryLabelsPanel() {
   const { state, dispatch } = useGym();
   const [editing, setEditing] = useState<CustomerCategory | null>(null);
   const [draft, setDraft] = useState({ label: "", description: "" });
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newForm, setNewForm] = useState({ label: "", key: "", description: "" });
+  const [categoryToDelete, setCategoryToDelete] = useState<CategoryLabel | null>(null);
 
   const startEdit = (c: CategoryLabel) => {
     setEditing(c.category);
     setDraft({ label: c.label, description: c.description });
   };
 
-  const save = (category: CustomerCategory) => {
+  const save = async (category: CustomerCategory) => {
     if (!draft.label.trim()) { toast.error("Label is required"); return; }
-    const payload: CategoryLabel = { category, label: draft.label.trim(), description: draft.description.trim() };
-    dispatch({ type: "UPDATE_CATEGORY_LABEL", payload });
-    addAudit(dispatch, "Category label updated", state.currentUser?.name || "Owner", `${payload.label} (${category})`);
-    toast.success("Label and description saved");
-    setEditing(null);
+    try {
+      const payload = await updateCategory(category, { label: draft.label, description: draft.description });
+      dispatch({ type: "UPDATE_CATEGORY_LABEL", payload });
+      addAudit(dispatch, "Category label updated", state.currentUser?.name || "Owner", `${payload.label} (${category})`);
+      toast.success("Label and description saved");
+      setEditing(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update category");
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newForm.label.trim()) {
+      toast.error("Category name is required");
+      return;
+    }
+    try {
+      const newCat = await createCategory({
+        label: newForm.label,
+        key: newForm.key,
+        description: newForm.description,
+      });
+      dispatch({ type: "ADD_CATEGORY", payload: newCat });
+      addAudit(dispatch, "Category created", state.currentUser?.name || "Owner", `${newCat.label} (${newCat.category})`);
+      toast.success(`Category "${newCat.label}" created successfully`);
+      setNewForm({ label: "", key: "", description: "" });
+      setShowAddModal(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create category");
+    }
+  };
+
+  const promptDelete = (cat: CategoryLabel) => {
+    if (PROTECTED_SYSTEM_CATEGORIES.includes(cat.category.toUpperCase())) {
+      toast.error(`The standard category "${cat.label}" is required by the gym system and cannot be deleted.`);
+      return;
+    }
+    setCategoryToDelete(cat);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+    try {
+      await deleteCategory(categoryToDelete.category, {
+        members: state.members,
+        plans: state.plans,
+      });
+      dispatch({ type: "DELETE_CATEGORY", payload: categoryToDelete.category });
+      addAudit(dispatch, "Category deleted", state.currentUser?.name || "Owner", `${categoryToDelete.label} (${categoryToDelete.category})`);
+      toast.success(`Category "${categoryToDelete.label}" deleted`);
+      setCategoryToDelete(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to delete category");
+    }
   };
 
   return (
     <div className={CARD}>
-      <h3 className="font-bold mb-4 flex items-center gap-2"><SquaresFour weight="fill" className="w-5 h-5 text-lime-400" /> Customer categories</h3>
-      <p className="text-sm text-zinc-500 mb-4">Labels and descriptions are editable: they are used everywhere in the app (registration, check-in, member portal, reports).</p>
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+        <div>
+          <h3 className="font-bold flex items-center gap-2">
+            <SquaresFour weight="fill" className="w-5 h-5 text-lime-400" /> Customer categories
+          </h3>
+          <p className="text-sm text-zinc-500 mt-1">
+            Labels and descriptions are editable: they are used everywhere in the app (registration, check-in, member portal, reports).
+          </p>
+        </div>
+        <button onClick={() => setShowAddModal(true)} className={BTN}>
+          <Plus className="w-4 h-4" /> Add Category
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {ALL_CATEGORIES.map(cat => {
-          const meta = state.categoryLabels.find(c => c.category === cat) ?? { category: cat, label: cat, description: "" };
+        {state.categoryLabels.map(meta => {
+          const cat = meta.category;
           const isEditing = editing === cat;
           const count = state.members.filter(m => (m.category || "REGULAR") === cat).length;
+          const isProtected = PROTECTED_SYSTEM_CATEGORIES.includes(cat.toUpperCase());
+
           return (
             <div key={cat} className="bg-zinc-800/50 rounded-2xl p-5 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="font-bold">{meta.label}</div>
-                  <div className="text-xs text-zinc-500 font-mono">{cat} · {count} member{count === 1 ? "" : "s"}</div>
+                  <div className="font-bold flex items-center gap-2">
+                    {meta.label}
+                    {isProtected && (
+                      <span className="text-[10px] bg-zinc-700/60 text-zinc-400 font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        System
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-zinc-500 font-mono">
+                    {cat} · {count} member{count === 1 ? "" : "s"}
+                  </div>
                 </div>
-                {!isEditing && <button onClick={() => startEdit(meta)} className="text-xs text-lime-400 hover:text-lime-300 flex items-center gap-1"><PencilSimple className="w-4 h-4" /> Edit</button>}
+                {!isEditing && (
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => startEdit(meta)} className="text-xs text-lime-400 hover:text-lime-300 flex items-center gap-1">
+                      <PencilSimple className="w-4 h-4" /> Edit
+                    </button>
+                    {!isProtected && (
+                      <button onClick={() => promptDelete(meta)} className="text-xs text-zinc-400 hover:text-red-400 flex items-center gap-1" title="Delete category">
+                        <Trash className="w-4 h-4" /> Delete
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
               {isEditing ? (
                 <div className="space-y-3">
@@ -71,6 +158,61 @@ function CategoryLabelsPanel() {
           );
         })}
       </div>
+
+      {/* Add Category Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setShowAddModal(false)}>
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className={`${CARD} w-full max-w-lg`} onClick={e => e.stopPropagation()}>
+              <h3 className="text-xl font-bold mb-4">Add Customer Category</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Category Name *</label>
+                  <input value={newForm.label} onChange={e => setNewForm({ ...newForm, label: e.target.value })} placeholder="e.g. Senior Citizen, VIP, Weekend Pass" className={INPUT} />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Code / Identifier (optional)</label>
+                  <input value={newForm.key} onChange={e => setNewForm({ ...newForm, key: e.target.value })} placeholder="e.g. SENIOR, VIP (auto-generated if empty)" className={INPUT} />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Description</label>
+                  <textarea value={newForm.description} onChange={e => setNewForm({ ...newForm, description: e.target.value })} placeholder="Describe access privileges or conditions..." rows={3} className={`${INPUT} resize-none`} />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={handleAddCategory} className="flex-1 bg-lime-400 text-zinc-950 font-bold py-2.5 rounded-xl hover:bg-lime-300 flex items-center justify-center gap-2">
+                    <Check className="w-4 h-4" /> Create Category
+                  </button>
+                  <button onClick={() => setShowAddModal(false)} className="px-4 py-2.5 rounded-xl bg-zinc-700 text-white font-semibold hover:bg-zinc-600">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Category Confirmation Dialog */}
+      <AnimatePresence>
+        {categoryToDelete && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setCategoryToDelete(null)}>
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className={`${CARD} w-full max-w-md border-red-500/30`} onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-bold text-white mb-2">Delete Customer Category</h3>
+              <p className="text-sm text-zinc-300 mb-4">
+                Are you sure you want to delete the category <span className="text-lime-400 font-semibold">{categoryToDelete.label}</span> ({categoryToDelete.category})? This action cannot be undone.
+              </p>
+              <div className="flex gap-3">
+                <button onClick={confirmDeleteCategory} className="flex-1 bg-red-500 text-white font-bold py-2.5 rounded-xl hover:bg-red-600 flex items-center justify-center gap-2">
+                  <Trash className="w-4 h-4" /> Delete Category
+                </button>
+                <button onClick={() => setCategoryToDelete(null)} className="px-4 py-2.5 rounded-xl bg-zinc-700 text-white font-semibold hover:bg-zinc-600">
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -119,11 +261,12 @@ function AccessRulesPanel() {
       <p className="text-sm text-zinc-500 mb-4">These time slots are applied automatically at check-in: a member outside their slot is denied (with an override option).</p>
 
       <div className="space-y-3">
-        {ALL_CATEGORIES.map(cat => {
+        {state.categoryLabels.map(meta => {
+          const cat = meta.category;
           const rules = state.accessRules.filter(r => r.category === cat);
           return (
             <div key={cat} className="border border-zinc-800 rounded-2xl p-4">
-              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">{categoryLabelOf(state, cat)}</div>
+              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">{meta.label}</div>
               {rules.length === 0 ? (
                 <p className="text-sm text-zinc-600">No restriction: free access at any time.</p>
               ) : (
@@ -155,7 +298,7 @@ function AccessRulesPanel() {
               <h3 className="text-xl font-bold mb-4">{editingId ? "Edit access rule" : "New access rule"}</h3>
               <div className="space-y-3">
                 <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value as CustomerCategory })} className={INPUT}>
-                  {ALL_CATEGORIES.map(c => <option key={c} value={c}>{categoryLabelOf(state, c)}</option>)}
+                  {state.categoryLabels.map(c => <option key={c.category} value={c.category}>{c.label}</option>)}
                 </select>
                 <div className="flex flex-wrap gap-2">{DAY_OPTIONS.map(d => <Chip key={d} active={form.days.includes(d)} onClick={() => toggleDay(d)}>{d}</Chip>)}</div>
                 <div className="grid grid-cols-2 gap-3">
@@ -174,121 +317,11 @@ function AccessRulesPanel() {
   );
 }
 
-/* ------------------ 3. Aerobics groups (AEROBICS category) ------------------ */
-function AerobicsGroupsPanel() {
-  const { state, dispatch } = useGym();
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", days: [] as string[], timeSlot: "18:00 - 19:00", trainerId: "", capacity: 20 });
-  const aerobicsMembers = state.members.filter(m => (m.category || "REGULAR") === "AEROBICS");
-
-  const toggleDay = (day: string) => setForm(f => ({ ...f, days: f.days.includes(day) ? f.days.filter(d => d !== day) : [...f.days, day] }));
-
-  const createGroup = () => {
-    if (!form.name.trim()) { toast.error("Group name is required"); return; }
-    if (form.days.length === 0) { toast.error("Select the group days"); return; }
-    const trainer = state.trainers.find(t => t.id === form.trainerId);
-    const group: AerobicsGroup = {
-      id: generateId("ag"), name: form.name.trim(), days: form.days, timeSlot: form.timeSlot,
-      trainerId: form.trainerId, trainerName: trainer?.name || "Unassigned", capacity: form.capacity, memberIds: [],
-    };
-    dispatch({ type: "ADD_AEROBICS_GROUP", payload: group });
-    addAudit(dispatch, "Aerobics group created", state.currentUser?.name || "Owner", `${group.name} · ${group.days.join("/")} ${group.timeSlot}`);
-    toast.success("Aerobics group created");
-    setForm({ name: "", days: [], timeSlot: "18:00 - 19:00", trainerId: "", capacity: 20 });
-    setShowForm(false);
-  };
-
-  const addMember = (group: AerobicsGroup, memberId: string) => {
-    if (!memberId) return;
-    if (group.memberIds.length >= group.capacity) { toast.error("Group capacity reached"); return; }
-    const member = state.members.find(m => m.id === memberId);
-    dispatch({ type: "UPDATE_AEROBICS_GROUP", payload: { ...group, memberIds: [...group.memberIds, memberId] } });
-    if (member) dispatch({ type: "UPDATE_MEMBER", payload: { ...member, aerobicsGroupId: group.id } });
-    addAudit(dispatch, "Member assigned to a group", state.currentUser?.name || "Owner", `${member?.name || memberId} → ${group.name}`);
-    toast.success(`${member?.name || "Member"} added to group ${group.name}`);
-  };
-
-  const removeMember = (group: AerobicsGroup, memberId: string) => {
-    const member = state.members.find(m => m.id === memberId);
-    dispatch({ type: "UPDATE_AEROBICS_GROUP", payload: { ...group, memberIds: group.memberIds.filter(id => id !== memberId) } });
-    if (member) dispatch({ type: "UPDATE_MEMBER", payload: { ...member, aerobicsGroupId: undefined } });
-    toast.success("Member removed from group");
-  };
-
-  return (
-    <div className={CARD}>
-      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
-        <h3 className="font-bold flex items-center gap-2"><Users weight="fill" className="w-5 h-5 text-lime-400" /> Aerobics groups</h3>
-        <button onClick={() => setShowForm(true)} className={BTN}><Plus className="w-4 h-4" /> New group</button>
-      </div>
-      <p className="text-sm text-zinc-500 mb-4">{aerobicsMembers.length} member{aerobicsMembers.length === 1 ? "" : "s"} in the {categoryLabelOf(state, "AEROBICS")} category · {state.aerobicsGroups.length} group{state.aerobicsGroups.length === 1 ? "" : "s"}.</p>
-
-      {state.aerobicsGroups.length === 0 && <p className="text-sm text-zinc-600">No group created yet.</p>}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {state.aerobicsGroups.map(group => {
-          const available = aerobicsMembers.filter(m => !group.memberIds.includes(m.id));
-          return (
-            <div key={group.id} className="bg-zinc-800/50 rounded-2xl p-5 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-bold">{group.name}</div>
-                  <div className="text-xs text-zinc-500">{group.days.join(" / ")} · {group.timeSlot} · {group.trainerName}</div>
-                </div>
-                <button onClick={() => { group.memberIds.forEach(id => { const m = state.members.find(mm => mm.id === id); if (m) dispatch({ type: "UPDATE_MEMBER", payload: { ...m, aerobicsGroupId: undefined } }); }); dispatch({ type: "DELETE_AEROBICS_GROUP", payload: group.id }); toast.success("Group deleted"); }} className="text-zinc-400 hover:text-red-400"><Trash className="w-4 h-4" /></button>
-              </div>
-              <div className="text-xs text-zinc-500">Occupancy : {group.memberIds.length}/{group.capacity}</div>
-              <div className="flex flex-wrap gap-2">
-                {group.memberIds.map(id => {
-                  const m = state.members.find(mm => mm.id === id);
-                  return (
-                    <span key={id} className="inline-flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-full pl-3 pr-2 py-1 text-xs">
-                      {m?.name || id}
-                      <button onClick={() => removeMember(group, id)} className="text-zinc-500 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
-                    </span>
-                  );
-                })}
-                {group.memberIds.length === 0 && <span className="text-xs text-zinc-600">No member assigned</span>}
-              </div>
-              <select value="" onChange={e => addMember(group, e.target.value)} className={INPUT}>
-                <option value="">Add a {categoryLabelOf(state, "AEROBICS")} member...</option>
-                {available.map(m => <option key={m.id} value={m.id}>{m.name} ({m.memberId})</option>)}
-              </select>
-            </div>
-          );
-        })}
-      </div>
-
-      <AnimatePresence>
-        {showForm && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setShowForm(false)}>
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className={`${CARD} w-full max-w-lg`} onClick={e => e.stopPropagation()}>
-              <h3 className="text-xl font-bold mb-4">New aerobics group</h3>
-              <div className="space-y-3">
-                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Group name (e.g. Morning aerobics)" className={INPUT} />
-                <div className="flex flex-wrap gap-2">{WEEK_DAYS.map(d => <Chip key={d} active={form.days.includes(d)} onClick={() => toggleDay(d)}>{d}</Chip>)}</div>
-                <input value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} placeholder="Time slot (e.g. 18:00 - 19:00)" className={INPUT} />
-                <select value={form.trainerId} onChange={e => setForm({ ...form, trainerId: e.target.value })} className={INPUT}>
-                  <option value="">Coach (optional)</option>
-                  {state.trainers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <input type="number" value={form.capacity} onChange={e => setForm({ ...form, capacity: Number(e.target.value) })} placeholder="Capacity" className={INPUT} />
-                <button onClick={createGroup} className="w-full bg-lime-400 text-zinc-950 font-bold py-3 rounded-xl hover:bg-lime-300">Create group</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 export function CategoriesView() {
   return (
     <div className="space-y-6">
       <CategoryLabelsPanel />
       <AccessRulesPanel />
-      <AerobicsGroupsPanel />
     </div>
   );
 }

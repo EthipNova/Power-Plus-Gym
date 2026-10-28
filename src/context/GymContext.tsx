@@ -1,8 +1,10 @@
 import { createContext, useContext, useReducer, useEffect, type ReactNode } from "react";
 import type { Member, Plan, Payment, Expense, Visit, EmailLog, StaffUser, GymSettings, AuditLog, AuthUser, MemberStatus, Trainer, GymClass, ClassAttendee, TrainerClientNote, CustomerCategory, AccessRule, AerobicsGroup, CategoryLabel, AccessDecision, SteamAccess, SteamUsage, SteamStatus, SteamType, Language, Locker, LockerAssignment } from "../types";
-import { MEMBERS, PLANS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, DEFAULT_SETTINGS, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, CATEGORY_LABELS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
+import { MEMBERS, PAYMENTS, EXPENSES, VISITS, EMAIL_LOGS, STAFF, DEFAULT_SETTINGS, AUDIT_LOGS, TRAINERS, CLASSES, CLASS_ATTENDEES, TRAINER_CLIENT_NOTES, ACCESS_RULES, AEROBICS_GROUPS, WEEK_DAYS, ALL_DAYS, STEAM_ACCESS, STEAM_USAGE, LOCKERS, LOCKER_ASSIGNMENTS } from "../constants";
 import { DEFAULT_LANGUAGE, translate } from "../i18n/translations";
 import { getCurrentSession, subscribeToAuthChanges, resolveTrustedUserRole, signOutUser } from "../services/auth";
+import { getLocalCategories, saveLocalCategories, fetchCategories } from "../services/categories";
+import { getLocalPlans, saveLocalPlans, fetchPlans } from "../services/plans";
 
 export interface State {
   members: Member[];
@@ -39,6 +41,7 @@ type Action =
   | { type: "ADD_PLAN"; payload: Plan }
   | { type: "UPDATE_PLAN"; payload: Plan }
   | { type: "DELETE_PLAN"; payload: string }
+  | { type: "SET_PLANS"; payload: Plan[] }
   | { type: "ADD_PAYMENT"; payload: Payment }
   | { type: "ADD_EXPENSE"; payload: Expense }
   | { type: "ADD_VISIT"; payload: Visit }
@@ -58,7 +61,10 @@ type Action =
   | { type: "ADD_AEROBICS_GROUP"; payload: AerobicsGroup }
   | { type: "UPDATE_AEROBICS_GROUP"; payload: AerobicsGroup }
   | { type: "DELETE_AEROBICS_GROUP"; payload: string }
+  | { type: "ADD_CATEGORY"; payload: CategoryLabel }
   | { type: "UPDATE_CATEGORY_LABEL"; payload: CategoryLabel }
+  | { type: "DELETE_CATEGORY"; payload: string }
+  | { type: "SET_CATEGORIES"; payload: CategoryLabel[] }
   | { type: "SET_STUDENT_VERIFICATION"; payload: { memberId: string; verified: boolean; verifiedBy: string } }
   | { type: "ADD_STEAM_ACCESS"; payload: SteamAccess }
   | { type: "UPDATE_STEAM_ACCESS"; payload: SteamAccess }
@@ -73,7 +79,7 @@ type Action =
 
 const initialState: State = {
   members: MEMBERS,
-  plans: PLANS,
+  plans: getLocalPlans(),
   payments: PAYMENTS,
   expenses: EXPENSES,
   visits: VISITS,
@@ -87,7 +93,7 @@ const initialState: State = {
   trainerNotes: TRAINER_CLIENT_NOTES,
   accessRules: ACCESS_RULES,
   aerobicsGroups: AEROBICS_GROUPS,
-  categoryLabels: CATEGORY_LABELS,
+  categoryLabels: getLocalCategories(),
   steamAccess: STEAM_ACCESS,
   steamUsage: STEAM_USAGE,
   language: DEFAULT_LANGUAGE,
@@ -104,9 +110,25 @@ function reducer(state: State, action: Action): State {
     case "ADD_MEMBER": return { ...state, members: [...state.members, action.payload] };
     case "UPDATE_MEMBER": return { ...state, members: state.members.map(m => m.id === action.payload.id ? action.payload : m) };
     case "DELETE_MEMBER": return { ...state, members: state.members.filter(m => m.id !== action.payload) };
-    case "ADD_PLAN": return { ...state, plans: [...state.plans, action.payload] };
-    case "UPDATE_PLAN": return { ...state, plans: state.plans.map(p => p.id === action.payload.id ? action.payload : p) };
-    case "DELETE_PLAN": return { ...state, plans: state.plans.filter(p => p.id !== action.payload) };
+    case "ADD_PLAN": {
+      const next = [...state.plans, action.payload];
+      saveLocalPlans(next);
+      return { ...state, plans: next };
+    }
+    case "UPDATE_PLAN": {
+      const next = state.plans.map(p => p.id === action.payload.id ? action.payload : p);
+      saveLocalPlans(next);
+      return { ...state, plans: next };
+    }
+    case "DELETE_PLAN": {
+      const next = state.plans.filter(p => p.id !== action.payload);
+      saveLocalPlans(next);
+      return { ...state, plans: next };
+    }
+    case "SET_PLANS": {
+      saveLocalPlans(action.payload);
+      return { ...state, plans: action.payload };
+    }
     case "ADD_PAYMENT": return { ...state, payments: [...state.payments, action.payload] };
     case "ADD_EXPENSE": return { ...state, expenses: [...state.expenses, action.payload] };
     case "ADD_VISIT": return { ...state, visits: [...state.visits, action.payload] };
@@ -126,7 +148,25 @@ function reducer(state: State, action: Action): State {
     case "ADD_AEROBICS_GROUP": return { ...state, aerobicsGroups: [...state.aerobicsGroups, action.payload] };
     case "UPDATE_AEROBICS_GROUP": return { ...state, aerobicsGroups: state.aerobicsGroups.map(g => g.id === action.payload.id ? action.payload : g) };
     case "DELETE_AEROBICS_GROUP": return { ...state, aerobicsGroups: state.aerobicsGroups.filter(g => g.id !== action.payload) };
-    case "UPDATE_CATEGORY_LABEL": return { ...state, categoryLabels: state.categoryLabels.map(c => c.category === action.payload.category ? action.payload : c) };
+    case "ADD_CATEGORY": {
+      const next = [...state.categoryLabels, action.payload];
+      saveLocalCategories(next);
+      return { ...state, categoryLabels: next };
+    }
+    case "UPDATE_CATEGORY_LABEL": {
+      const next = state.categoryLabels.map(c => c.category === action.payload.category ? action.payload : c);
+      saveLocalCategories(next);
+      return { ...state, categoryLabels: next };
+    }
+    case "DELETE_CATEGORY": {
+      const next = state.categoryLabels.filter(c => c.category !== action.payload);
+      saveLocalCategories(next);
+      return { ...state, categoryLabels: next };
+    }
+    case "SET_CATEGORIES": {
+      saveLocalCategories(action.payload);
+      return { ...state, categoryLabels: action.payload };
+    }
     case "SET_STUDENT_VERIFICATION": return {
       ...state,
       members: state.members.map(m => m.id === action.payload.memberId
@@ -202,6 +242,30 @@ export function GymProvider({ children }: { children: ReactNode }) {
       isMounted = false;
       unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadData() {
+      try {
+        const [cats, plns] = await Promise.all([
+          fetchCategories(),
+          fetchPlans(),
+        ]);
+        if (isMounted) {
+          if (cats && cats.length > 0) {
+            dispatch({ type: "SET_CATEGORIES", payload: cats });
+          }
+          if (plns && plns.length > 0) {
+            dispatch({ type: "SET_PLANS", payload: plns });
+          }
+        }
+      } catch (err) {
+        console.warn("Categories and plans live load note:", err);
+      }
+    }
+    void loadData();
+    return () => { isMounted = false; };
   }, []);
 
   return <GymContext.Provider value={{ state, dispatch }}>{children}</GymContext.Provider>;

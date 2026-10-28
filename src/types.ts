@@ -35,6 +35,7 @@ export interface Plan {
   perks: string[];
   active: boolean;
   applicableCategories: CustomerCategory[] | "ALL";
+  description?: string;
 }
 
 export interface Payment {
@@ -171,7 +172,7 @@ export interface TrainerClientNote {
 /* Phase 2 — Gestion des catégories clients et règles d'accès          */
 /* ------------------------------------------------------------------ */
 
-export type CustomerCategory = "STUDENT" | "MUSLIM" | "AEROBICS" | "REGULAR";
+export type CustomerCategory = "STUDENT" | "MUSLIM" | "AEROBICS" | "REGULAR" | (string & {});
 
 export type AccessStatus = "allowed" | "denied" | "override";
 
@@ -180,6 +181,7 @@ export interface CategoryLabel {
   category: CustomerCategory;
   label: string;
   description: string;
+  isSystem?: boolean;
 }
 
 /** Règle d'accès associée à une catégorie (jours + plage horaire). */
