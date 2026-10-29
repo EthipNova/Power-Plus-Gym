@@ -1,17 +1,33 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Lightning, PencilSimple, Plus } from "@phosphor-icons/react";
-import { useGym, formatETB, generateId, addAudit, categoryLabelOf, planCategoryText } from "../context/GymContext";
-import { ALL_CATEGORIES } from "../constants";
+import { useGym, formatETB, generateId, addAudit, planCategoryText } from "../context/GymContext";
 import type { CustomerCategory, Plan } from "../types";
+import { createPlan, updatePlan } from "../services/plans";
 import { toast } from "sonner";
 
 const INPUT = "w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-white placeholder:text-zinc-500 focus:outline-none focus:border-lime-400/50";
 const CARD = "bg-zinc-900 border border-zinc-800 rounded-2xl p-6";
 
-type FormState = { name: string; price: number; durationDays: number; perks: string; applyAll: boolean; cats: CustomerCategory[] };
+type FormState = {
+  name: string;
+  price: number;
+  durationDays: number;
+  description: string;
+  perks: string;
+  applyAll: boolean;
+  cats: CustomerCategory[];
+};
 
-const emptyForm = (): FormState => ({ name: "", price: 0, durationDays: 30, perks: "", applyAll: true, cats: [] });
+const emptyForm = (): FormState => ({
+  name: "",
+  price: 0,
+  durationDays: 30,
+  description: "",
+  perks: "",
+  applyAll: true,
+  cats: [],
+});
 
 export function PlansView() {
   const { state, dispatch } = useGym();
@@ -31,6 +47,7 @@ export function PlansView() {
       name: plan.name,
       price: plan.price,
       durationDays: plan.durationDays,
+      description: plan.description || "",
       perks: plan.perks.join(", "),
       applyAll: plan.applicableCategories === "ALL",
       cats: plan.applicableCategories === "ALL" ? [] : plan.applicableCategories,
@@ -38,23 +55,46 @@ export function PlansView() {
     setShowForm(true);
   };
 
-  const savePlan = () => {
-    if (!form.name.trim() || form.price <= 0) { toast.error("Enter a name and a valid price"); return; }
-    if (!form.applyAll && form.cats.length === 0) { toast.error("Select at least one customer category"); return; }
+  const savePlan = async () => {
+    if (!form.name.trim() || form.price <= 0) {
+      toast.error("Enter a name and a valid price");
+      return;
+    }
+    if (!form.applyAll && form.cats.length === 0) {
+      toast.error("Select at least one customer category");
+      return;
+    }
+
     const base = {
       name: form.name.trim(),
-      price: form.price,
-      durationDays: form.durationDays,
+      price: Number(form.price),
+      durationDays: Number(form.durationDays) || 30,
+      description: form.description.trim(),
       perks: form.perks.split(",").map(s => s.trim()).filter(Boolean),
       applicableCategories: (form.applyAll ? "ALL" : form.cats) as Plan["applicableCategories"],
     };
-    const planData: Plan = editing ? { ...editing, ...base } : { ...base, id: generateId("p"), active: true };
-    dispatch({ type: editing ? "UPDATE_PLAN" : "ADD_PLAN", payload: planData });
-    addAudit(dispatch, editing ? "Plan updated" : "Plan created", state.currentUser?.name || "Owner", `${planData.name} · ${formatETB(planData.price)} · ${planCategoryText(state, planData)}`);
-    toast.success(editing ? "Plan updated" : "Plan created");
-    setShowForm(false);
-    setEditing(null);
-    setForm(emptyForm());
+
+    try {
+      if (editing) {
+        const updated: Plan = { ...editing, ...base };
+        dispatch({ type: "UPDATE_PLAN", payload: updated });
+        await updatePlan(updated);
+        addAudit(dispatch, "Plan updated", state.currentUser?.name || "Owner", `${updated.name} · ${formatETB(updated.price)} · ${planCategoryText(state, updated)}`);
+        toast.success("Plan updated successfully");
+      } else {
+        const planData: Plan = { ...base, id: generateId("p"), active: true };
+        dispatch({ type: "ADD_PLAN", payload: planData });
+        await createPlan(planData);
+        addAudit(dispatch, "Plan created", state.currentUser?.name || "Owner", `${planData.name} · ${formatETB(planData.price)} · ${planCategoryText(state, planData)}`);
+        toast.success("Plan created successfully");
+      }
+      setShowForm(false);
+      setEditing(null);
+      setForm(emptyForm());
+    } catch (err: unknown) {
+      console.error("Failed to save plan:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to save plan");
+    }
   };
 
   return (
@@ -75,12 +115,26 @@ export function PlansView() {
               <span className={`text-xs px-2 py-1 rounded-full ${plan.active ? "bg-lime-400/20 text-lime-400" : "bg-zinc-700 text-zinc-400"}`}>{plan.active ? "Active" : "Inactive"}</span>
             </div>
             <div className="text-2xl font-black text-lime-400 mb-1">{formatETB(plan.price)}</div>
-            <div className="text-sm text-zinc-500 mb-3">{plan.durationDays} days</div>
-            <div className="text-xs mb-3 flex items-center gap-2 text-zinc-400"><Lightning weight="fill" className="w-4 h-4 text-lime-400" /> {planCategoryText(state, plan)}</div>
+            <div className="text-sm text-zinc-500 mb-2">{plan.durationDays} days</div>
+            {plan.description && <p className="text-xs text-zinc-400 mb-3 italic">{plan.description}</p>}
+            <div className="text-xs mb-3 flex items-center gap-2 text-zinc-300">
+              <Lightning weight="fill" className="w-4 h-4 text-lime-400 shrink-0" />
+              <span><strong className="text-zinc-400">Category:</strong> {planCategoryText(state, plan)}</span>
+            </div>
             <div className="flex flex-wrap gap-1 mb-4">{plan.perks.map(p => <span key={p} className="text-xs bg-zinc-800 px-2 py-1 rounded">{p}</span>)}</div>
             <div className="flex gap-4 text-sm">
               <button onClick={() => openEdit(plan)} className="text-zinc-400 hover:text-white flex items-center gap-1"><PencilSimple className="w-4 h-4" /> Edit</button>
-              <button onClick={() => { dispatch({ type: "UPDATE_PLAN", payload: { ...plan, active: !plan.active } }); toast.success(plan.active ? "Plan deactivated" : "Plan activated"); }} className="text-zinc-400 hover:text-white">{plan.active ? "Deactivate" : "Activate"}</button>
+              <button
+                onClick={async () => {
+                  const updated = { ...plan, active: !plan.active };
+                  dispatch({ type: "UPDATE_PLAN", payload: updated });
+                  await updatePlan(updated);
+                  toast.success(plan.active ? "Plan deactivated" : "Plan activated");
+                }}
+                className="text-zinc-400 hover:text-white"
+              >
+                {plan.active ? "Deactivate" : "Activate"}
+              </button>
             </div>
           </div>
         ))}
@@ -92,24 +146,54 @@ export function PlansView() {
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className={`${CARD} w-full max-w-md max-h-[85vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
               <h3 className="text-xl font-bold mb-4">{editing ? "Edit plan" : "New plan"}</h3>
               <div className="space-y-3">
-                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Plan name" className={INPUT} />
-                <div className="grid grid-cols-2 gap-3">
-                  <input type="number" value={form.price || ""} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="Price (Br)" className={INPUT} />
-                  <input type="number" value={form.durationDays || ""} onChange={e => setForm({ ...form, durationDays: Number(e.target.value) })} placeholder="Duration (days)" className={INPUT} />
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Plan Name</label>
+                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Monthly Membership" className={INPUT} />
                 </div>
-                <textarea value={form.perks} onChange={e => setForm({ ...form, perks: e.target.value })} placeholder="Perks (comma-separated)" rows={2} className={`${INPUT} resize-none`} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Price (ETB)</label>
+                    <input type="number" value={form.price || ""} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="Price (Br)" className={INPUT} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Duration (days)</label>
+                    <input type="number" value={form.durationDays || ""} onChange={e => setForm({ ...form, durationDays: Number(e.target.value) })} placeholder="Duration (days)" className={INPUT} />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Description</label>
+                  <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Plan description (optional, visible on public site)" rows={2} className={`${INPUT} resize-none`} />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Perks (comma-separated)</label>
+                  <textarea value={form.perks} onChange={e => setForm({ ...form, perks: e.target.value })} placeholder="e.g. Full access, Lockers, Free water" rows={2} className={`${INPUT} resize-none`} />
+                </div>
                 <div className="bg-zinc-800/50 rounded-xl p-4 space-y-3">
                   <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Eligible categories</div>
-                  <label className="flex items-center gap-2 text-sm text-zinc-200"><input type="checkbox" checked={form.applyAll} onChange={e => setForm({ ...form, applyAll: e.target.checked })} className="accent-lime-400" /> All categories</label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-200 cursor-pointer">
+                    <input type="checkbox" checked={form.applyAll} onChange={e => setForm({ ...form, applyAll: e.target.checked })} className="accent-lime-400" />
+                    All categories
+                  </label>
                   {!form.applyAll && (
-                    <div className="flex flex-wrap gap-2">
-                      {ALL_CATEGORIES.map(cat => (
-                        <button key={cat} onClick={() => toggleCat(cat)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${form.cats.includes(cat) ? "bg-lime-400 text-zinc-950" : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"}`}>{categoryLabelOf(state, cat)}</button>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {state.categoryLabels.map(cat => (
+                        <button
+                          key={cat.category}
+                          type="button"
+                          onClick={() => toggleCat(cat.category)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                            form.cats.includes(cat.category)
+                              ? "bg-lime-400 text-zinc-950 font-bold"
+                              : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
                       ))}
                     </div>
                   )}
                 </div>
-                <button onClick={savePlan} className="w-full bg-lime-400 text-zinc-950 font-bold py-3 rounded-xl hover:bg-lime-300">{editing ? "Update" : "Create plan"}</button>
+                <button onClick={savePlan} className="w-full bg-lime-400 text-zinc-950 font-bold py-3 rounded-xl hover:bg-lime-300 transition-colors">{editing ? "Update plan" : "Create plan"}</button>
               </div>
             </motion.div>
           </motion.div>

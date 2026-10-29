@@ -4,7 +4,7 @@ import { Barbell, Users, Lightning, ShieldCheck, Heart, Star, MapPin, Phone, Env
 import { useGym, formatETB, sendEmail, planAppliesToCategory, planCategoryText, categoryLabelOf } from "../context/GymContext";
 import type { CustomerCategory, Member } from "../types";
 
-const CATEGORY_ICONS: Record<CustomerCategory, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
+const CATEGORY_ICONS: Record<string, typeof Sparkle> = { REGULAR: Sparkle, STUDENT: GraduationCap, MUSLIM: MoonStars, AEROBICS: MusicNotes };
 const SHOWCASE_IMAGE = "https://dala-prod-public-storage.s3.eu-west-1.amazonaws.com/attachments/74c3195e-a7cc-42d6-bc7d-af4a5309a248/1791041128283_Screenshot_2026-10-03_182425.webp";
 import { toast } from "sonner";
 import { registerCustomer } from "../services/registration";
@@ -13,6 +13,7 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
   const { state, dispatch } = useGym();
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string>("p2");
+  const [selectedCategory, setSelectedCategory] = useState<CustomerCategory>("REGULAR");
   const [joinCategory, setJoinCategory] = useState<CustomerCategory>("REGULAR");
   const [showWomensHours, setShowWomensHours] = useState(false);
   const [joinForm, setJoinForm] = useState({ name: "", phone: "", email: "", studentId: "", institution: "" });
@@ -21,6 +22,13 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
   const [contactForm, setContactForm] = useState({ name: "", email: "", message: "" });
 
   const plansForCategory = state.plans.filter(p => p.active && planAppliesToCategory(p, joinCategory));
+
+  const handleCategorySelect = (category: CustomerCategory) => {
+    setSelectedCategory(category);
+    setJoinCategory(category);
+    const next = state.plans.find(p => p.active && planAppliesToCategory(p, category));
+    if (next) setSelectedPlan(next.id);
+  };
 
   const selectCategory = (category: CustomerCategory) => {
     setJoinCategory(category);
@@ -189,25 +197,72 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
         </div>
       </section>
 
-      {/* Member categories & access slots (Phase 2) */}
+      {/* Member categories & access slots */}
       <section className="py-24 px-4">
         <div className="max-w-7xl mx-auto">
           <h2 className="text-3xl md:text-5xl font-black uppercase tracking-tight mb-4 text-center">Our member categories</h2>
-          <p className="text-zinc-400 mb-12 text-center max-w-2xl mx-auto">Every profile enjoys its own rate card and its own access slots.</p>
+          <p className="text-zinc-400 mb-12 text-center max-w-2xl mx-auto">Select a category below to see tailored plans and dedicated access slots.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 items-stretch">
             {state.categoryLabels.map(cat => {
-              const Icon = CATEGORY_ICONS[cat.category];
+              const Icon = CATEGORY_ICONS[cat.category] || Sparkle;
               const rules = state.accessRules.filter(r => r.category === cat.category && r.active);
+              const isSelected = selectedCategory === cat.category;
               return (
-                <motion.div key={cat.category} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} onClick={() => cat.category === "MUSLIM" && setShowWomensHours(true)} onKeyDown={e => { if (cat.category === "MUSLIM" && (e.key === "Enter" || e.key === " ")) setShowWomensHours(true); }} role={cat.category === "MUSLIM" ? "button" : undefined} tabIndex={cat.category === "MUSLIM" ? 0 : undefined} className={`bg-zinc-900 border border-zinc-800 rounded-2xl p-6 hover:border-lime-400/30 transition-colors ${cat.category === "MUSLIM" ? "cursor-pointer" : ""}`}>
-                  <Icon weight="fill" className="w-9 h-9 text-lime-400 mb-3" />
-                  <h3 className="text-lg font-bold mb-1">{cat.label}</h3>
-                  <p className="text-zinc-400 text-sm mb-4">{cat.description}</p>
-                  <div className="space-y-1">
-                    {rules.map(r => (
-                      <div key={r.id} className="text-xs text-zinc-500 flex items-start gap-2"><Clock className="w-3.5 h-3.5 text-lime-400 mt-0.5 shrink-0" /><span>{r.startTime} – {r.endTime} · {r.days.join(", ")}</span></div>
-                    ))}
-                    {rules.length === 0 && <span className="text-xs text-zinc-600">Free access during opening hours</span>}
+                <motion.div
+                  key={cat.category}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  onClick={() => handleCategorySelect(cat.category)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleCategorySelect(cat.category);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className={`rounded-2xl p-6 transition-all duration-200 cursor-pointer flex flex-col justify-between text-left ${
+                    isSelected
+                      ? "bg-zinc-900 border-2 border-lime-400 shadow-xl shadow-lime-400/10 ring-1 ring-lime-400/30"
+                      : "bg-zinc-900 border border-zinc-800 hover:border-lime-400/40 hover:bg-zinc-900/90"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <Icon weight="fill" className={`w-9 h-9 ${isSelected ? "text-lime-400" : "text-lime-400/80"}`} />
+                      {isSelected && (
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-lime-400 text-zinc-950">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="text-lg font-bold mb-1 text-white">{cat.label}</h3>
+                    <p className="text-zinc-400 text-sm mb-4">{cat.description}</p>
+                  </div>
+                  <div>
+                    <div className="space-y-1 mb-2">
+                      {rules.map(r => (
+                        <div key={r.id} className="text-xs text-zinc-500 flex items-start gap-2">
+                          <Clock className="w-3.5 h-3.5 text-lime-400 mt-0.5 shrink-0" />
+                          <span>{r.startTime} – {r.endTime} · {r.days.join(", ")}</span>
+                        </div>
+                      ))}
+                      {rules.length === 0 && <span className="text-xs text-zinc-600">Free access during opening hours</span>}
+                    </div>
+
+                    {cat.category === "MUSLIM" && (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setShowWomensHours(true);
+                        }}
+                        className="text-xs text-lime-400 hover:text-lime-300 underline underline-offset-4 flex items-center gap-1 font-semibold pt-2"
+                      >
+                        View Women&apos;s Hours schedule &rarr;
+                      </button>
+                    )}
                   </div>
                 </motion.div>
               );
@@ -219,31 +274,101 @@ export default function PublicWebsite({ onJoin }: { onJoin: (member: Member) => 
       {/* Memberships */}
       <section id="plans" className="scroll-mt-24 py-24 px-4 bg-zinc-900/30">
         <div className="max-w-7xl mx-auto">
-          <h2 className="text-3xl md:text-5xl font-black uppercase tracking-tight mb-4 text-center">Our memberships</h2>
-          <p className="text-zinc-400 mb-12 text-center">Pick the plan that fits your goals.</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
-            {state.plans.filter(p => p.active).map((plan, i) => (
-              <motion.div key={plan.id} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}
-                className={`relative rounded-2xl p-6 border ${i === 1 ? "border-lime-400 bg-zinc-900 shadow-lg shadow-lime-400/5" : "border-zinc-800 bg-zinc-950"}`}>
-                {i === 1 && <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-lime-400 text-zinc-950 text-xs font-bold px-3 py-1 rounded-full">MOST POPULAR</span>}
-                <h3 className="text-lg font-bold mb-1">{plan.name}</h3>
-                <div className="text-3xl font-black text-lime-400 mb-1">{formatETB(plan.price)}</div>
-                <div className="text-sm text-zinc-500 mb-2">{plan.durationDays} days of access</div>
-                <div className="text-xs text-lime-400/80 mb-4 flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {planCategoryText(state, plan)}</div>
-                <ul className="space-y-2 mb-6">
-                  {plan.perks.map(perk => (
-                    <li key={perk} className="flex items-center gap-2 text-sm text-zinc-300">
-                      <CheckCircle weight="fill" className="w-4 h-4 text-lime-400" /> {perk}
-                    </li>
-                  ))}
-                </ul>
-                <button onClick={() => { setSelectedPlan(plan.id); setShowJoinModal(true); }}
-                  className={`w-full py-3 rounded-xl font-bold text-sm transition-colors active:scale-[0.98] ${i === 1 ? "bg-lime-400 text-zinc-950 hover:bg-lime-300" : "bg-zinc-800 text-white hover:bg-zinc-700"}`}>
-                  Choose this plan
+          <h2 className="text-3xl md:text-5xl font-black uppercase tracking-tight mb-2 text-center">Our memberships</h2>
+          <p className="text-zinc-400 mb-6 text-center">
+            Showing membership plans for <span className="text-lime-400 font-bold">{categoryLabelOf(state, selectedCategory)}</span>
+          </p>
+
+          {/* Category Filter Pills */}
+          <div className="flex flex-wrap justify-center gap-2 mb-12">
+            {state.categoryLabels.map(cat => {
+              const isActive = selectedCategory === cat.category;
+              return (
+                <button
+                  key={cat.category}
+                  onClick={() => handleCategorySelect(cat.category)}
+                  className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+                    isActive
+                      ? "bg-lime-400 text-zinc-950 font-bold shadow-md shadow-lime-400/20"
+                      : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
+                  }`}
+                >
+                  {cat.label}
                 </button>
-              </motion.div>
-            ))}
+              );
+            })}
           </div>
+
+          {state.plans.filter(p => p.active && planAppliesToCategory(p, selectedCategory)).length === 0 ? (
+            <div className="text-center py-16 px-6 max-w-md mx-auto bg-zinc-900 border border-zinc-800 rounded-2xl">
+              <Sparkle weight="fill" className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
+              <h3 className="text-lg font-bold text-white mb-2">No membership plans available for this category yet.</h3>
+              <p className="text-sm text-zinc-400 mb-6">
+                Plans tailored for {categoryLabelOf(state, selectedCategory)} will appear here once configured by the admin.
+              </p>
+              <button
+                onClick={() => handleCategorySelect("REGULAR")}
+                className="bg-lime-400 text-zinc-950 font-semibold px-5 py-2.5 rounded-xl text-sm hover:bg-lime-300 transition-colors"
+              >
+                View Regular Plans
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+              {state.plans
+                .filter(p => p.active && planAppliesToCategory(p, selectedCategory))
+                .map((plan, i) => (
+                  <motion.div
+                    key={plan.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.08 }}
+                    className={`relative rounded-2xl p-6 border flex flex-col justify-between ${
+                      i === 0
+                        ? "border-lime-400 bg-zinc-900 shadow-lg shadow-lime-400/5"
+                        : "border-zinc-800 bg-zinc-950"
+                    }`}
+                  >
+                    {i === 0 && (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-lime-400 text-zinc-950 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                        Featured
+                      </span>
+                    )}
+                    <div>
+                      <h3 className="text-lg font-bold mb-1">{plan.name}</h3>
+                      <div className="text-3xl font-black text-lime-400 mb-1">{formatETB(plan.price)}</div>
+                      <div className="text-sm text-zinc-500 mb-2">{plan.durationDays} days of access</div>
+                      {plan.description && (
+                        <p className="text-xs text-zinc-400 mb-3 italic">{plan.description}</p>
+                      )}
+                      <div className="text-xs text-lime-400/80 mb-4 flex items-center gap-1">
+                        <Users className="w-3.5 h-3.5" /> {planCategoryText(state, plan)}
+                      </div>
+                      <ul className="space-y-2 mb-6">
+                        {plan.perks.map(perk => (
+                          <li key={perk} className="flex items-center gap-2 text-sm text-zinc-300">
+                            <CheckCircle weight="fill" className="w-4 h-4 text-lime-400 shrink-0" /> {perk}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedPlan(plan.id);
+                        setJoinCategory(selectedCategory);
+                        setShowJoinModal(true);
+                      }}
+                      className={`w-full py-3 rounded-xl font-bold text-sm transition-colors active:scale-[0.98] ${
+                        i === 0 ? "bg-lime-400 text-zinc-950 hover:bg-lime-300" : "bg-zinc-800 text-white hover:bg-zinc-700"
+                      }`}
+                    >
+                      Choose this plan
+                    </button>
+                  </motion.div>
+                ))}
+            </div>
+          )}
         </div>
       </section>
 
